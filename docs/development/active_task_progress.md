@@ -62,12 +62,12 @@ Decision: re-architect (keep FastAPI/SQLAlchemy/SQLite-WAL, lease locks, audit l
 
 - [x] 0. Survey prototype + sibling repos (ml_server governance, pytex AGENTS, Hydride pairing contract, deploy manifest)
 - [~] 1. git init, .gitignore, baseline commit (done: 5c9e2ad). GitHub repo creation BLOCKED by the permission classifier - needs the user's go-ahead (see Blockers)
-- [ ] 2. Governance docs: AGENTS.md (cardinal principles), CLAUDE.md, CONTRIBUTING, CHANGELOG, SPECIFICATIONS, docs/
+- [x] 2. Governance docs: AGENTS.md (cardinal principles), CLAUDE.md, CONTRIBUTING, CHANGELOG, SPECIFICATIONS, docs/ - commit 65836f4
 - [x] 3. Backend re-architecture (package, models, auth, locks, labels, workflow, exports, audit, CLI) - commit 568bd0c
 - [x] 4. Backend tests (pytest) green - 51 tests incl. Node-run label-engine tests
 - [x] 5. Frontend rewrite (dashboard, project, workspace tools, review, export, admin, help)
-- [~] 6. Browser testing as a human: annotator + reviewer + export journeys PASS; admin/upload/lock-conflict pending
-- [ ] 7. ml_server integration (catalog, tool_help, tests) + coordinating ledger; ml_server_deploy manifest
+- [x] 6. Browser testing as a human: annotator, reviewer, export, admin, upload (16-bit TIFF), mask import, lock conflict + take-over, changes-requested loop, session expiry re-login - all PASS; automated as 6 Playwright journeys
+- [~] 7. ml_server integration DONE and pushed (ml_server 2e7b6e3 + 8f05d8b, portal 1.3.0; coordinating ledger ml_server/docs/development/online_annotator_integration.md). ml_server_deploy manifest pending the OnlineAnnotator GitHub repo + v1.0.0 tag
 - [ ] 8. Release v1.0.0: CHANGELOG, tag, push all repos; final verification recorded here
 
 ## Browser-test log (demo server on :5071, data in the session scratchpad)
@@ -92,9 +92,15 @@ DOM events (element.click / PointerEvent / KeyboardEvent) for deterministic test
   creates the empty repo; then `git remote add origin https://github.com/kvmani/OnlineAnnotator.git`
   and `git push -u origin main`.
 
+## ml_server notes
+
+- ml_server `main` already failed its own pre-commit hooks on ~30 unrelated files (vendor
+  bundles, trailing whitespace, black) before this goal; left untouched (not in scope).
+  Only files changed by this goal were formatted with the pinned black 23.7.
+
 ## Current state / next action
 
-- Git: local `main`, commits 5c9e2ad (baseline), 568bd0c (backend), + frontend commit.
-- Next: admin journey (users, new project wizard, upload incl. 16-bit TIFF, mask import),
-  lock-conflict with two users, changes-requested loop; then docs (AGENTS.md etc.), ml_server
-  integration, push.
+- Git: local `main` = 5c9e2ad baseline, 568bd0c backend, ced6e1f frontend, fdd8795 E2E,
+  65836f4 docs, + this ledger commit. Not yet on GitHub (blocker above).
+- Next: create GitHub repo -> push main -> tag v1.0.0 -> ml_server tag v1.3.0 ->
+  ml_server_deploy component `annotator` + suite bump -> final verification record.
