@@ -61,14 +61,14 @@ Decision: re-architect (keep FastAPI/SQLAlchemy/SQLite-WAL, lease locks, audit l
 ## Plan / status
 
 - [x] 0. Survey prototype + sibling repos (ml_server governance, pytex AGENTS, Hydride pairing contract, deploy manifest)
-- [~] 1. git init, .gitignore, baseline commit (done: 5c9e2ad). GitHub repo creation BLOCKED by the permission classifier - needs the user's go-ahead (see Blockers)
+- [x] 1. git init, baseline commit 5c9e2ad; public repo github.com/kvmani/OnlineAnnotator created with the user's approval (2026-09-12); main pushed; GitHub Actions CI green
 - [x] 2. Governance docs: AGENTS.md (cardinal principles), CLAUDE.md, CONTRIBUTING, CHANGELOG, SPECIFICATIONS, docs/ - commit 65836f4
 - [x] 3. Backend re-architecture (package, models, auth, locks, labels, workflow, exports, audit, CLI) - commit 568bd0c
 - [x] 4. Backend tests (pytest) green - 51 tests incl. Node-run label-engine tests
 - [x] 5. Frontend rewrite (dashboard, project, workspace tools, review, export, admin, help)
 - [x] 6. Browser testing as a human: annotator, reviewer, export, admin, upload (16-bit TIFF), mask import, lock conflict + take-over, changes-requested loop, session expiry re-login - all PASS; automated as 6 Playwright journeys
-- [~] 7. ml_server integration DONE and pushed (ml_server 2e7b6e3 + 8f05d8b, portal 1.3.0; coordinating ledger ml_server/docs/development/online_annotator_integration.md). ml_server_deploy manifest pending the OnlineAnnotator GitHub repo + v1.0.0 tag
-- [ ] 8. Release v1.0.0: CHANGELOG, tag, push all repos; final verification recorded here
+- [x] 7. ml_server integration pushed (ml_server 2e7b6e3 + 8f05d8b, tag v1.3.0; coordinating ledger ml_server/docs/development/online_annotator_integration.md); ml_server_deploy 22e9f3f adds component `annotator`, suite 1.7.0
+- [~] 8. Release: OnlineAnnotator v1.0.0 tagged + pushed (99e485e); suite v1.7.0 release build pending
 
 ## Browser-test log (demo server on :5071, data in the session scratchpad)
 
@@ -87,10 +87,20 @@ DOM events (element.click / PointerEvent / KeyboardEvent) for deterministic test
 
 ## Blockers
 
-- Creating `github.com/kvmani/OnlineAnnotator` (public, like pytex/ml_server) via the GitHub API
-  was blocked by the auto-mode permission classifier. Needs the user's approval, or the user
-  creates the empty repo; then `git remote add origin https://github.com/kvmani/OnlineAnnotator.git`
-  and `git push -u origin main`.
+- None. (GitHub repository creation was resolved by the user's approval on 2026-09-12.)
+
+## Verification record (2026-09-12)
+
+| Check | Result |
+| --- | --- |
+| `python -m pytest` (OnlineAnnotator) | 51 passed (Windows, Python 3.13) |
+| Node label-engine tests | 8 passed |
+| `npm run test:browser` (Playwright, Chromium) | 6 passed locally; CI green on GitHub (ubuntu, Python 3.12, Node 22) |
+| `ruff check` | clean |
+| Wheel build | all web assets packaged |
+| Suite-style launch smoke test | health, one-time admin, host-relative portal link, data in shared/ |
+| ml_server full suite | 82 passed; flake8/black clean on changed files |
+| ml_server_deploy | manifest validation, 62 unit tests, text hygiene clean |
 
 ## ml_server notes
 
@@ -100,7 +110,8 @@ DOM events (element.click / PointerEvent / KeyboardEvent) for deterministic test
 
 ## Current state / next action
 
-- Git: local `main` = 5c9e2ad baseline, 568bd0c backend, ced6e1f frontend, fdd8795 E2E,
-  65836f4 docs, + this ledger commit. Not yet on GitHub (blocker above).
-- Next: create GitHub repo -> push main -> tag v1.0.0 -> ml_server tag v1.3.0 ->
-  ml_server_deploy component `annotator` + suite bump -> final verification record.
+- OnlineAnnotator: `main` pushed, tag `v1.0.0` -> 99e485e.
+- ml_server: `main` pushed (2e7b6e3, 8f05d8b), tag `v1.3.0`.
+- ml_server_deploy: `main` 22e9f3f (suite 1.7.0 with component `annotator`).
+- Next: after ml_server_deploy CI passes, tag suite `v1.7.0` so the release workflow runs the
+  dependency gate and builds the office archive; record the result here and close the goal.
