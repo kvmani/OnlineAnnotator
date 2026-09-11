@@ -1,93 +1,100 @@
-# OnlineAnnotator
+# Online Annotator
 
-**Online Microstructural Semantic Segmentation Annotator & ML Ground-Truth Preparation Workbench**
+**Create, review and export pixel-exact semantic-segmentation ground truth for microstructure
+images — on your office intranet, in the browser, with no installation for users.**
 
-*Intranet-Native • Multi-User Concurrency • HydrideSegmentation Ready • ml_server Integrated*
+Part of the office scientific-tools platform (`ml_server`); first customer:
+[HydrideSegmentation](../HydrideSegmentation). Version **1.0.0**.
 
----
+## What it does
 
-## 1. Overview
+- **Annotate** — brush, eraser, polygon, lasso, a microstructure-aware magic wand, an
+  Otsu box threshold, fill, speck removal and hole filling; unlimited classes per project;
+  undo/redo; zoom, pan, contrast and outline views; autosave. What you see is exactly what is
+  saved: labels are integer class values per pixel, never blended colours.
+- **Review** — annotators submit, reviewers approve, correct or return with a comment; nobody
+  approves their own work; every submission is an immutable, fingerprinted version.
+- **Collaborate** — each image is reserved for one editor at a time; the gallery shows who is
+  working where; "Annotate next" and "Review next" hand everyone the right image.
+- **Export** — approved ground truth as a ZIP ready for HydrideSegmentation (`pairs/x.png` +
+  `pairs/x_mask.png`) or train/val/test folders, with binary, red, indexed or colour masks,
+  exact COCO RLE, optional YOLO polygons, and a manifest recording who annotated and approved
+  every image.
+- **Active learning** — import model predictions as a starting point, correct, approve, export,
+  retrain.
+- **Self-explanatory** — a first-run quick start, `(?)` explanations at every decision, a hint
+  bar for the active tool, and a full Help centre (`/help`).
+- **Intranet-native** — one Python process, SQLite, no internet, no CDN, no external identity
+  provider; office e-mail accounts, optional e-mail sign-in codes through your SMTP relay.
 
-**OnlineAnnotator** is a high-performance web application designed for office intranets to create, review, and curate pixel-precise ground-truth annotations for metallurgical microstructures.
+## Try it in two minutes (demo mode)
 
-### Key Capabilities:
-- **Intranet-First Architecture**: Zero external cloud or CDN dependencies; self-contained FastAPI backend with integrated SQLite (WAL mode) and modular HTML5 Canvas SPA frontend.
-- **Office Email Identity**: Usernames are strictly corporate email addresses (e.g. `user@barc.gov.in`, `analyst@office.local`).
-- **Dual Authentication**: Stored password login (`bcrypt`) + 6-digit Office Email OTP challenge delivery with development console fallback.
-- **Multi-User Parallel Annotation**: Exclusive lease-based image locking with automatic timeout and WebSocket synchronization prevents annotators from colliding or overwriting each other's work.
-- **Material Science & Hydride Tooling**:
-  - Interactive Brush, Eraser, Polygon, and Freehand tools.
-  - Smart Otsu Wand auto-thresholding specially tuned for dark hydride platelets in zirconium matrices.
-  - Micrograph visual enhancements (contrast, brightness, color inversion) to highlight faint phases.
-- **Persistent Data & Session Resumption**:
-  - Auto-save drafts and full revision history (Draft -> Review -> Approved / Changes Requested).
-  - "Resume Work" button instantly restores an annotator's exact active image, pan, and zoom level.
-  - Working ledger mirrored in `data/ledger.json` for continuous auditability.
-- **Direct ML Dataset Packaging**:
-  - HydrideSegmentation paired folder structure (`images/` and `masks/`, `{stem}_mask.png`).
-  - Binary masks (0/255), Red-dominant RGB masks (matching Mado pipeline), and Indexed Multiclass masks.
-  - Standard COCO JSON, YOLO segmentation polygons, NumPy (`.npz`), and partitioned ZIP dataset bundles.
-
----
-
-## 2. Quick Start
-
-### 2.1 Starting the Server
-Run with Python:
-```powershell
-python run.py
+```bash
+python -m pip install -r requirements.txt
+PYTHONPATH=src python -m online_annotator serve --demo --data-dir dev-data
 ```
-Or use the PowerShell launcher:
-```powershell
-.\start_annotator.ps1
+
+Windows: `.\scripts\start_dev.ps1`. Open <http://127.0.0.1:5070/> and pick a demo account
+(annotator, reviewer or administrator). Demo mode generates synthetic Zr-hydride micrographs;
+never use it on a production server.
+
+## Install for real use
+
+```bash
+python -m pip install .                      # provides the `online-annotator` command
+online-annotator serve --host 0.0.0.0 --port 5070 --data-dir /var/lib/online-annotator
 ```
-The server will start at `http://127.0.0.1:5070`.
 
-### 2.2 Default Accounts (Seeded)
-- **Email**: `admin@office.local`
-- **Password**: `Admin@123`
-- *Or log in using any office email address via 6-digit Email OTP!*
+The first start creates an administrator with a one-time password (printed and written to
+`<data-dir>/initial_admin_password.txt`) unless `ONLINE_ANNOTATOR_ADMIN_EMAIL` and
+`ONLINE_ANNOTATOR_ADMIN_PASSWORD` are set. Other commands:
 
----
-
-## 3. Keyboard Shortcuts Reference
-
-| Shortcut | Action |
-|---|---|
-| `B` | Brush Tool |
-| `E` | Eraser Tool |
-| `P` | Polygon Tool (Click points, Double-click to close) |
-| `W` | Smart Otsu Wand Tool (Drag box to threshold ROI) |
-| `Space` or `V` | Pan Tool (Click and drag to pan canvas) |
-| `[` / `]` | Decrease / Increase Brush Radius |
-| `Ctrl + Z` | Undo last action |
-| `Ctrl + Y` | Redo action |
-| `Ctrl + S` | Save Draft |
-| `Left Arrow` | Previous Image |
-| `Right Arrow` | Next Image |
-| `1`, `2`, `3`, `4` | Select Microstructure Class |
-
----
-
-## 4. Platform Integration
-
-### 4.1 Integration with `ml_server`
-OnlineAnnotator is registered as a first-class tool in the central `ml_server` catalog:
-- **Tool ID**: `online-annotator`
-- **URL**: `http://127.0.0.1:5070` (configurable via `ONLINE_ANNOTATOR_URL`)
-- **Category**: Microstructure
-
-### 4.2 Integration with `HydrideSegmentation`
-Exported dataset packages strictly match the expectations of `C:\Users\kvman\HydrideSegmentation\configs\hydride\prepare_dataset.paired_rgb_mask.mado.yml`:
-- Paired folders: `train/images`, `train/masks`, `val/images`, `val/masks`, `test/images`, `test/masks`
-- Binary or Red-dominant masks (`R >= 200, G <= 60, B <= 60`)
-- `dataset_manifest.json` reporting total features, hydride area fractions, and sample metadata.
-
----
-
-## 5. Automated Tests
-
-Execute the full verification suite:
-```powershell
-python -m pytest tests -v
+```bash
+online-annotator create-user name@lab.example --role reviewer --name "Full Name"
+online-annotator reset-password name@lab.example
+online-annotator seed-demo            # add the demo project to an existing installation
 ```
+
+(Without installing, use `python -m online_annotator …` with `PYTHONPATH=src`.)
+
+Configuration: `config.example.yml` (all keys and defaults) or `ONLINE_ANNOTATOR_*` environment
+variables. Operations, systemd, backups, upgrades: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+## Platform integration
+
+- **ml_server portal** — catalog card `online-annotator` links to `ONLINE_ANNOTATOR_URL`
+  (default `http://127.0.0.1:5070`); scientific help at `/tools/online-annotator/help`.
+- **ml_server_deploy** — component `annotator`, port 5070, health `/api/health`.
+- **Health contract** — `GET /api/health` → `{"status": "ok", "tool_id": "online-annotator", "version": "1.0.0"}`.
+- **HydrideSegmentation** — exports feed `prepare_dataset` directly
+  ([docs/EXPORT_FORMAT.md](docs/EXPORT_FORMAT.md)); model predictions can be imported as
+  pre-annotations.
+
+## Development
+
+```bash
+python -m pip install -r requirements-test.txt
+python -m pytest                 # API, services, workflow, exports + Node label-engine tests
+python -m ruff check src tests
+npm install && npm run test:browser   # Playwright journeys in Chromium (fresh demo server)
+```
+
+Read [AGENTS.md](AGENTS.md) first: it holds the cardinal rules (exact ground truth, resumable
+work landed on `main`, ordinary-user-first UX with help in the same change, server-side
+enforcement, intranet self-sufficiency). Progress of the current goal:
+[docs/development/active_task_progress.md](docs/development/active_task_progress.md).
+
+## Documentation
+
+| Document | Contents |
+| --- | --- |
+| In-app Help centre (`/help`) | the user guide: getting started, tools, reviewing, exporting, troubleshooting |
+| [SPECIFICATIONS.md](SPECIFICATIONS.md) | roles, workflow, API, requirements |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | components, raster-label design, concurrency |
+| [docs/EXPORT_FORMAT.md](docs/EXPORT_FORMAT.md) | dataset ZIP and manifest contract |
+| [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | installation, configuration, backups, upgrade/rollback |
+| [CHANGELOG.md](CHANGELOG.md) | release history |
+
+## Licence
+
+MIT.

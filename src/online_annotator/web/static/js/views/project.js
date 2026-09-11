@@ -478,7 +478,15 @@ async function exportTab(body, project) {
         : "Needs OpenCV on the server (pip install opencv-python-headless)."))),
     h("div", { class: "export-action" }, previewBox, create));
 
-  body.append(h("div", { class: "export-layout" }, form, h("aside", { class: "export-side" }, h("h3", {}, "Previous exports"), historyBox)));
+  const statsBox = h("div", { class: "card stats-card" });
+  body.append(h("div", { class: "export-layout" }, form, h("aside", { class: "export-side" }, statsBox, h("h3", {}, "Previous exports"), historyBox)));
+  api.get(`api/v1/projects/${project.id}/summary`).then((s) => {
+    clear(statsBox).append(h("h3", {}, "Approved ground truth ", helpTip("Area fraction of each class over all approved images: labelled pixels divided by total pixels. For hydrides this is the ground-truth hydride area fraction of the dataset.")),
+      s.approved_pixels ? h("table", { class: "table compact-table" }, h("tbody", {}, s.classes.map((c) => h("tr", {},
+        h("td", {}, h("span", { class: "swatch", style: { background: c.color } }), " ", c.name),
+        h("td", { class: "right mono" }, fmtPct(s.class_fractions[String(c.index)] || 0, 2)))))) : h("p", { class: "muted small" }, "No approved images yet."),
+      h("p", { class: "muted small" }, `${plural(s.counts.approved, "approved image")} of ${s.counts.total}.`));
+  }).catch(() => statsBox.remove());
 
   let pending = 0;
   async function sync() {

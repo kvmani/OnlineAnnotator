@@ -1,0 +1,35 @@
+# Online Annotator configuration. Every key is optional; the values shown are the defaults.
+# Use:  online-annotator serve --config /etc/online-annotator/config.yml
+# or set ONLINE_ANNOTATOR_CONFIG. Environment variables ONLINE_ANNOTATOR_<KEY> override this file.
+
+host: 127.0.0.1            # 0.0.0.0 to accept connections from other machines
+port: 5070
+data_dir: data             # database, images, masks, exports, audit log, secret key
+database_url: null         # default: sqlite:///<data_dir>/online_annotator.sqlite3
+secret_key: null           # default: generated once and kept in <data_dir>/secret_key
+
+session_hours: 12          # sign-in lasts this long after the last activity
+lock_lease_seconds: 300    # editing reservation; renewed automatically while an image is open
+max_upload_mb: 200         # per uploaded file
+max_image_megapixels: 80
+login_attempts_per_15min: 10
+
+allow_self_approval: false # true lets a reviewer approve their own submission (single-person teams)
+self_registration: false   # with e-mail enabled: unknown addresses may sign up by code as annotators
+allowed_email_domains: []  # e.g. ["lab.example"]; restricts new accounts
+cookie_secure: false       # true when served over HTTPS
+
+portal_url: null           # "All tools" link, e.g. http://tools.intranet.local:5000/
+feedback_url: null         # optional feedback link in the Help menu
+site_name: Online Annotator
+
+demo: false                # NEVER on production: seeds demo accounts with published passwords
+
+email:                     # optional SMTP relay for one-time sign-in codes
+  enabled: false
+  smtp_host: ""
+  smtp_port: 25
+  use_tls: false
+  username: ""
+  password: ""
+  from_address: online-annotator@intranet.local

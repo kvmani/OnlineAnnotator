@@ -1,85 +1,201 @@
-# AGENTS.md - Repository Working Contract
+# AGENTS.md — Repository Working Contract
 
-This document provides authoritative, non-negotiable guidance for automated agents and developers working in the **OnlineAnnotator** repository.
+This file tells human contributors and automation agents how to work in **OnlineAnnotator**.
+It is authoritative for this repository. Read it completely before changing anything.
 
----
+OnlineAnnotator is the office intranet's tool for creating, reviewing and exporting
+pixel-exact **semantic-segmentation ground truth** for microstructure images. Its first
+customer is `HydrideSegmentation`; it must stay general enough for any phase, defect or
+feature a materials scientist wants to label. It is a long-lived scientific instrument, not
+a prototype: the labels it produces train models whose outputs are published and relied on.
 
-## 1. Core Mission & Founding Principles
+## Primary references
 
-1. **Scientific Traceability & Reproducibility**:
-   All microstructural semantic segmentation annotations serve as ground-truth for machine learning models (such as `HydrideSegmentation`). Data integrity, versioning, provenance, and exact mask reproduction are paramount.
+Read these before substantial work, in this order:
 
-2. **Intranet-First Deployment**:
-   The software runs inside an air-gapped or restricted office intranet. It must not depend on external CDNs, cloud authentication services, or remote APIs. All assets (fonts, icons, JS/CSS libraries, demo data) must be self-contained within this repository.
+1. `../ml_server/docs/PLATFORM_VISION_AND_GOVERNANCE.md` — platform governance (policy 1.1).
+   This repository is a member tool of the ml_server platform and adopts it. Where this file
+   is stricter, this file wins; a genuine conflict stops work until it is reconciled.
+2. `SPECIFICATIONS.md` — what the product does and the contracts it keeps.
+3. `docs/ARCHITECTURE.md` — how the code is organised and why.
+4. `docs/EXPORT_FORMAT.md` — the dataset contract consumed by training pipelines.
+5. `docs/DEPLOYMENT.md` — how it runs on the office server.
+6. `docs/development/active_task_progress.md` — the live progress ledger.
 
-3. **Multi-User Safe Concurrency**:
-   Multiple annotators work concurrently across browser sessions. To prevent data corruption or overwritten annotations, **image lease locking** is mandatory. No agent may bypass the locking contract when mutating annotation records.
+## Cardinal rules
 
-4. **Office Email Identity**:
-   Usernames are strictly office email addresses (e.g. `user@barc.gov.in`, `analyst@office.local`). No arbitrary username strings without valid domain structures are permitted. Dual authentication (stored password and 6-digit email OTP) must be preserved.
+These outrank convenience, speed and tidiness. A change that breaks one is a defect even if
+every test passes.
 
-5. **Working Ledger Continuity**:
-   Every state modification (user creation, image lease, draft save, review request, approval, dataset export) must be written to the database ledger and mirrored to `data/ledger.json`. Furthermore, when agent tasks pause or conclude, `LEDGER.md` must be updated with the latest progress state.
+### 1. Ground truth is exact, validated and traceable
 
----
+- The canonical annotation is an **8-bit label map**: one integer per pixel, `0` = background,
+  `1..255` = the project's class numbers. No anti-aliasing, blending, resampling or colour
+  round-trip may ever sit between what the annotator drew and what is stored or exported.
+- The browser sends raw label bytes; it never reads labels back from a canvas (colour
+  management and anti-fingerprinting noise corrupt canvas read-back). All client-side label
+  mutation lives in `web/static/js/editor/labelmap.js`; all server-side encoding and decoding
+  lives in `services/labels.py`. Nothing else touches label bytes.
+- The server validates every label map (size, allowed class values) before storing it.
+- Submissions freeze **immutable versions** with a content SHA-256. History is never rewritten;
+  "restore" copies a version into the working copy.
+- Exports read the latest **approved** version only, unless the user explicitly chooses
+  otherwise, and every export carries a manifest recording who annotated, who approved, which
+  version, the SHA-256 of every file, the class map and the options used.
+- An uploaded original is stored byte-for-byte; any display conversion (16-bit, TIFF, EXIF
+  orientation) is described in `conversion_note`. No silent fallbacks for scientific steps:
+  when something cannot be done faithfully, refuse with a clear message.
 
-## 2. Priority Hierarchy
+### 2. Every goal is resumable; progress lands on `main`
 
-When goals or requirements appear to conflict, apply this strict priority order:
-1. **Data Safety, Traceability, and Scientific Accuracy**
-2. **Multi-User Concurrency Integrity (Locking & Leases)**
-3. **ML Pipeline Compatibility (HydrideSegmentation paired format, COCO, YOLO)**
-4. **Intranet Self-Sufficiency (Zero external CDN or cloud dependencies)**
-5. **Execution Speed & Feature Additions**
+Inherited from platform governance §3.1–3.2 and pytex's cardinal rule.
 
----
+- Keep `docs/development/active_task_progress.md` current for every multi-step goal:
+  objective, decisions, completed work, verification results, Git state, blockers, next action.
+  Update it before long-running work and in the same commit as the code it describes.
+- Commit **and push** to `main` after each self-consistent, verified increment. An unpushed
+  commit is not durable progress. No feature branches for ordinary work.
+- Stage explicit paths (`git add <file>`), never `git add -A` / `git add .`.
+- When a goal ends, is deferred or abandoned, say so in the ledger and commit it.
 
-## 3. Mandatory Architectural Boundaries
+### 3. Ordinary users first: the tool explains itself
 
-### 3.1 Backend & Database
-- **FastAPI** provides the REST API and WebSocket services.
-- **SQLAlchemy 2.0** ORM manages SQLite in `WAL` (Write-Ahead Logging) mode to support concurrent intranet reads and serialized atomic writes.
-- **Pydantic v2** models define strict input/output data validation contracts.
-- **Computer Vision Operations**: Raster/vector processing, Otsu thresholding, morphological operations, and format conversions reside exclusively in `backend/app/services/cv_service.py` and `export_service.py`. Core computation must never be coupled to HTTP route handlers.
+Most annotators are materials scientists, students or technicians, not annotation experts.
 
-### 3.2 Frontend Architecture
-- The frontend is served directly by the backend as a single-page application (SPA).
-- No external CDN scripts (Tailwind CDN, Google Fonts, Unpkg, etc.) are allowed. All CSS and JavaScript must be served locally from `/static`.
-- The 2D canvas workspace must maintain decoupling between:
-  1. The rendering engine (`canvas.js`)
-  2. The tool implementations (`tools.js`)
-  3. The API client & synchronization layer (`api.js`, `ws.js`)
-  4. The UI layout and modal states (`app.js`, `auth.js`)
+- Every screen states what to do next; primary actions are obvious (**Annotate next**,
+  **Submit for review**, **Approve**, **Create export**).
+- Every decision with scientific consequences (mask format, split, which annotations to
+  export, class numbers, self-approval, protect mode, tool parameters) has an inline `(?)`
+  explanation (`helpTip` in `ui.js`) in plain language.
+- The workspace hint bar always explains the active tool; banners explain every lock and
+  review state and offer the next action.
+- Error messages say what happened **and what to do**. No stack traces, codes or jargon.
+- Work is never lost: autosave with a visible save state, lost-session re-login in a dialog,
+  refusal to leave with unsaved work, optimistic revision checks instead of silent overwrites.
+- The in-app **Help centre** (`web/static/js/views/help.js`) is the canonical user guide. A
+  change to user-visible behaviour updates the help text, the inline hints and the E2E
+  journeys **in the same commit**.
 
----
+### 4. Rules are enforced on the server
 
-## 4. ML Pipeline Integration Standards
+The browser mirrors rules for convenience; the server is the only authority. Editing leases,
+workflow transitions, role checks, self-approval, revision checks and label validation live in
+`services/` and are unit-tested. A UI-only guard is a bug.
 
-### 4.1 HydrideSegmentation Alignment
-All exports intended for hydride segmentation must strictly conform to the contracts in `configs/hydride/prepare_dataset.paired_rgb_mask.mado.yml`:
-- **Paired File Pattern**: Image `{stem}.png` or `{stem}.jpg` paired with `{stem}_mask.png`.
-- **Binary Mask Mode**: 8-bit single channel PNG where `0 = background / matrix` and `255 = hydride`.
-- **RGB Mask Mode**: 3-channel 24-bit PNG where the red channel dominates for hydrides (`R >= 200, G <= 60, B <= 60`).
-- **Multiclass Indexed Mode**: 8-bit PNG where pixel values correspond strictly to the assigned class IDs.
+### 5. Intranet self-sufficiency
 
-### 4.2 Standard ML Formats
-Exports must also support:
-- **COCO JSON**: Categories list, image dimensions, polygon segmentation coordinates or RLE, and bounding boxes.
-- **YOLO Segmentation**: Normalized polygon coordinates (`class_id x1 y1 x2 y2 ... xn yn`).
-- **NumPy Archive (`.npz`)**: Arrays `images`, `masks`, `classes`, and `metadata`.
-- **Packaged Dataset Bundle (`.zip`)**: Structured splits (`train/`, `val/`, `test/`) with paired `images/` and `masks/` and a `dataset_manifest.json` report containing area fractions, sample counts, and class statistics.
+No CDN, web font, analytics, telemetry or external URL — at build time or run time. All assets
+ship in `src/online_annotator/web/`. `tests/test_frontend_engine.py` fails on any external URL
+in HTML/JS/CSS. Python dependencies must be available from the office pip mirror; keep the
+runtime set small (FastAPI, Uvicorn, SQLAlchemy, Pydantic, bcrypt, PyYAML, NumPy, Pillow).
+OpenCV is optional (YOLO export only).
 
----
+### 6. Standalone by default, composable by integration
 
-## 5. Testing & Quality Requirements
+Platform governance §3.5. The tool installs, runs, tests and deploys without `ml_server`.
+The portal only links to it by URL. The tool owns its health contract
+(`/api/health` → `{"status","tool_id","version"}`), its version (`_version.py`), its
+changelog, its deployment and rollback documentation.
 
-1. **Automated Test Suite**:
-   Every new endpoint, schema change, or service method must have corresponding unit or integration tests in `tests/`.
-2. **Non-Regression Verification**:
-   Before completing any task, execute:
-   ```powershell
-   python -m pytest tests -v
-   ```
-   All tests must pass with zero failures.
-3. **Ledger Update**:
-   Always record task completion, schema changes, and resumed state in `LEDGER.md`.
+### 7. The repository holds sources and canonical assets only
+
+Inherited from pytex. Never commit runtime data (`data/`), databases, uploads, exports, audit
+logs, screenshots, build output, caches, `node_modules/`, test results, or **any real specimen
+image** — demo micrographs are generated deterministically by `services/demo.py`. Add the
+`.gitignore` entry before or with the change that first produces an artefact.
+
+### 8. Secure by default
+
+bcrypt passwords; only SHA-256 of session tokens stored; one-time e-mail codes never reach
+the browser; no account is created implicitly unless `self_registration` is configured;
+first-run admin gets a random one-time password; mutating API calls require the
+`X-Requested-With: OnlineAnnotator` header (CSRF guard); security headers on every response.
+Secrets never enter git, logs, or the audit trail.
+
+## Priority order when goals conflict
+
+1. Scientific correctness, data safety and traceability
+2. Multi-user integrity (leases, revisions, workflow)
+3. Usability for ordinary users and never losing work
+4. Compatibility of export contracts (HydrideSegmentation, COCO, YOLO)
+5. Intranet self-sufficiency and security
+6. Maintainability
+7. Speed of delivery and new features
+
+## Architectural boundaries
+
+```
+src/online_annotator/
+  _version.py      single release identity (read by UI, health, manifests, packaging)
+  config.py        defaults < YAML < ONLINE_ANNOTATOR_* env vars
+  models.py        SQLAlchemy models (SQLite WAL by default)
+  services/        ALL behaviour: auth, workflow (leases + state machine), labels, imaging,
+                   projects, exports, audit, demo. Pure, unit-tested, no HTTP knowledge.
+  api/             thin FastAPI routers: validate, call a service, serialise.
+  app.py           factory: middleware (CSRF guard, headers, caching), routers, static SPA.
+  cli.py           serve, create-user, reset-password, seed-demo.
+  web/             vanilla ES-module SPA, no build step:
+    static/js/editor/labelmap.js   exact label operations + undo history (Node-tested)
+    static/js/editor/editor.js     canvas view, rendering and tool interaction
+    static/js/views/*.js           screens; help.js is the user guide
+```
+
+- Route handlers never contain business rules; services never import FastAPI.
+- The frontend never computes anything the server must trust.
+- New dependencies need a reason recorded in the ledger and must exist on the office mirror.
+
+## Contracts that need a deliberate, versioned change
+
+Changing any of these requires: a schema/version bump where applicable, tests, `CHANGELOG.md`
+entry, documentation update, and a note in the ledger.
+
+- Health response shape and `tool_id` (`online-annotator`).
+- Label transport: raw row-major `uint8`, optional gzip, `base_revision` query parameter.
+- Stored label PNG format (8-bit greyscale, pixel = class index).
+- Export manifest schema `online-annotator.export/1` and layouts in `docs/EXPORT_FORMAT.md`.
+- HydrideSegmentation pairing: `<stem>.png` + `<stem>_mask.png`, binary 0/255 or red
+  (R≥200, G≤60, B≤60); image stems never contain `_mask`.
+- Database schema (`db.SCHEMA_VERSION`): migrations must be additive or scripted, and a newer
+  schema must refuse to start on an older release.
+
+## Testing (proportional, per platform governance §9)
+
+| Command | What it proves | When |
+| --- | --- | --- |
+| `python -m pytest` | services, API, workflow, exports, auth, CLI; runs the Node engine tests if Node is present | every change |
+| `node --test tests/js/labelmap.test.mjs` | exact label operations and undo | editor changes |
+| `npm run test:browser` | real-browser user journeys (Playwright, fresh demo server) | any UI or workflow change; before every release |
+| `python -m ruff check src tests` | lint | every commit |
+
+- Behaviour changes add or update tests in the same commit; bug fixes add a regression test.
+- Tests must not leave warnings, open resources or stray files.
+- Before a release or deployment run **all** of the above and record results in the ledger.
+- Browser testing tip: some automation harnesses inject clicks when sending key presses; drive
+  the workspace with DOM events or Playwright's own keyboard, never with a harness that clicks.
+
+## Definition of done for a change
+
+- [ ] Behaviour implemented in `services/` with server-side enforcement and unit tests.
+- [ ] UI updated; hint bar, `(?)` help and Help centre describe the new behaviour.
+- [ ] Playwright journey added or updated when a user flow changed.
+- [ ] Docs updated (`SPECIFICATIONS.md`, `docs/*`), `CHANGELOG.md` under *Unreleased*.
+- [ ] `pytest`, `ruff`, and when relevant `npm run test:browser` pass.
+- [ ] Ledger updated; explicit-path commit; pushed to `main`.
+
+## Releases
+
+1. Update `src/online_annotator/_version.py` (SemVer) and move *Unreleased* in `CHANGELOG.md`.
+2. Run the full verification set above; record it in the ledger.
+3. Commit, tag `vX.Y.Z`, push `main` and the tag.
+4. Bump the `annotator` component `ref` in `ml_server_deploy/manifest.yml` and follow that
+   repository's release procedure. Rollback = previous suite release (data directory is shared
+   and never touched by upgrades; schema changes must stay backward-readable for one release).
+
+## Anti-goals
+
+- No vector-first annotation model for semantic segmentation (shapes are an input method,
+  the label map is the truth).
+- No build toolchain, framework or bundler for the frontend.
+- No cloud services, external identity providers or telemetry.
+- No silent "best guess" conversions of masks, images or class maps.
+- No feature that bypasses review for data presented as ground truth.

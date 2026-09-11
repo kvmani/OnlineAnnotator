@@ -68,6 +68,8 @@ def test_hydride_pairs_binary_export_is_exact(ann, rev, project_id, image_id):
     assert rec["approved_at"].endswith("+00:00") and rec["approved_at"] >= rec["annotated_at"]
     listed = rev.get(f"/api/v1/projects/{project_id}/exports").json()["exports"]
     assert listed[0]["image_count"] == 1
+    summary = rev.get(f"/api/v1/projects/{project_id}/summary").json()
+    assert summary["approved_pixels"] == W * H and summary["class_fractions"]["1"] == 180 / (W * H)
 
 
 def test_split_folders_indexed_auto_split_and_coco_rle(ann, rev, project_id, image_id):

@@ -9,7 +9,7 @@ description = "Intranet-native, multi-user semantic-segmentation annotation work
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "K. V. Mani Krishna" }]
+authors = [{ name = "kvmani" }]
 dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.27",

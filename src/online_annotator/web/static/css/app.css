@@ -374,3 +374,5 @@ body.in-workspace .toasts { bottom: 44px; right: 316px; }
 .ws.side-collapsed .ws-side { display: none; }
 .side-section .num { width: 64px; padding: 4px 6px; }
 .side-section .inline-field { gap: 4px 6px; }
+.stats-card { margin-bottom: 16px; padding: 12px 14px; }
+.compact-table td { padding: 4px 6px; }

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import json
 from dataclasses import asdict
 from pathlib import Path
 
@@ -21,7 +20,7 @@ from ..services import exports as export_ops
 from ..services import labels as label_ops
 from ..services import projects as project_ops
 from . import serialize
-from .deps import active_user, admin, get_image, get_project, get_settings, reviewer
+from .deps import active_user, admin, get_project, get_settings, reviewer
 from .schemas import (
     BulkImageUpdateBody,
     ClassBody,
@@ -311,15 +310,6 @@ def download_export(export_id: int, db: Session = Depends(get_db), _: User = Dep
     return FileResponse(path, media_type="application/zip", filename=record.filename)
 
 
-@router.get("/projects/{project_id}/image/{image_id}")
-def image_in_project(project_id: int, image_id: int, db: Session = Depends(get_db),
-                     user: User = Depends(active_user)) -> dict:
-    img = get_image(image_id, db)
-    if img.project_id != project_id:
-        raise HTTPException(404, "Image not found in this project.")
-    return {"image": serialize.image(db, img, user, detail=True)}
-
-
 @router.get("/projects/{project_id}/summary")
 def project_summary(project_id: int, db: Session = Depends(get_db), _: User = Depends(active_user)) -> dict:
     """Per-class pixel totals over approved versions (for the dashboard)."""
@@ -336,4 +326,4 @@ def project_summary(project_id: int, db: Session = Depends(get_db), _: User = De
     return {"approved_pixels": pixels, "class_pixels": totals,
             "class_fractions": {k: (n / pixels if pixels else 0.0) for k, n in totals.items()},
             "counts": project_ops.status_counts(project),
-            "classes": json.loads(json.dumps([serialize.label_class(c) for c in project.classes]))}
+            "classes": [serialize.label_class(c) for c in project.classes]}
