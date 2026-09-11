@@ -3,7 +3,7 @@
 Every setting has a safe default so ``online-annotator serve`` works with no file at
 all. Nested keys are overridden with a double underscore, for example
 ``ONLINE_ANNOTATOR_EMAIL__SMTP_HOST=mail.intranet``. Lists are given as JSON
-(``ONLINE_ANNOTATOR_ALLOWED_EMAIL_DOMAINS=["barc.gov.in"]``).
+(``ONLINE_ANNOTATOR_ALLOWED_EMAIL_DOMAINS=["lab.example"]``).
 """
 
 from __future__ import annotations
