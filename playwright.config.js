@@ -31,7 +31,7 @@ export default defineConfig({
         command:
           'python -c "import shutil; shutil.rmtree(\'.e2e-data\', ignore_errors=True)" && ' +
           "python -m online_annotator serve --demo --host 127.0.0.1 --port 5072 --data-dir .e2e-data",
-        env: { PYTHONPATH: "src", ONLINE_ANNOTATOR_LOGIN_ATTEMPTS_PER_15MIN: "50" },
+        env: { PYTHONPATH: "src", ONLINE_ANNOTATOR_LOGIN_ATTEMPTS_PER_15MIN: "50", ONLINE_ANNOTATOR_PORTAL_URL: ":5000/" },
         url: "http://127.0.0.1:5072/api/health",
         reuseExistingServer: false,
         timeout: 60_000,

@@ -59,14 +59,19 @@ annotator:
   health: /api/health
   public_url_env: ONLINE_ANNOTATOR_URL          # the portal catalog links here
   start: "{venv}/bin/python -m online_annotator serve --host {bind} --port {port}"
+  env_file: shared/config/ml-platform.env
   environment:
     PYTHONPATH: "{current}/apps/OnlineAnnotator/src"
     ONLINE_ANNOTATOR_DATA_DIR: "{root}/shared/data/online_annotator"
+    ONLINE_ANNOTATOR_PORTAL_URL: ":5000/"        # same host the user typed, portal port
 ```
 
-The data directory lives under `shared/`, so upgrades and rollbacks never touch it. Set the
-portal link and the first administrator in `shared/config/ml-platform.env`
-(`ONLINE_ANNOTATOR_PORTAL_URL`, `ONLINE_ANNOTATOR_ADMIN_EMAIL`, …).
+The data directory lives under `shared/`, so upgrades and rollbacks never touch it. The
+portal link is host-relative, so it works from every desk without knowing the server's
+address. Optional settings (first administrator, SMTP) go into
+`shared/config/ml-platform.env` as `ONLINE_ANNOTATOR_*` lines; values there override the
+unit's `Environment=` lines. On the first start, read the generated administrator password
+from `shared/data/online_annotator/initial_admin_password.txt` (or the journal).
 
 ## Configuration
 

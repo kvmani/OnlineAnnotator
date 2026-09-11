@@ -19,7 +19,7 @@ self_registration: false   # with e-mail enabled: unknown addresses may sign up 
 allowed_email_domains: []  # e.g. ["lab.example"]; restricts new accounts
 cookie_secure: false       # true when served over HTTPS
 
-portal_url: null           # "All tools" link, e.g. http://tools.intranet.local:5000/
+portal_url: null           # "All tools" link, e.g. http://tools.intranet.local:5000/ or ":5000/" (same host)
 feedback_url: null         # optional feedback link in the Help menu
 site_name: Online Annotator
 

@@ -132,6 +132,8 @@ test("two people cannot edit the same image at once", async ({ browser }) => {
 test("an administrator creates a project, adds a user and uploads images", async ({ page }) => {
   const problems = watchConsole(page);
   await signIn(page, "admin@demo.local");
+  // The portal link is host-relative (":5000/"), so it works from every desk.
+  await expect(page.getByRole("link", { name: "All tools" })).toHaveAttribute("href", "http://127.0.0.1:5000/");
 
   await page.getByRole("link", { name: "Users" }).click();
   await page.getByRole("button", { name: "Add user" }).click();

@@ -27,9 +27,12 @@ First production release: a re-architecture of the inherited prototype.
   login rate limiting, first-run administrator bootstrap, CLI user tools.
 - Self-explanatory UI: quick start, `(?)` help at decisions, tool hint bar, state banners, Help
   centre, keyboard sheet; re-sign-in dialog that keeps unsaved work.
+- `portal_url` may be host-relative (`:5000/`), resolved in the browser, so the "All tools"
+  link works from every desk in the ml_server suite.
 - Platform contract: `/api/health` `{status, tool_id, version}`, `/help`, security headers,
   CSRF header guard, `python -m online_annotator` and `online-annotator` entry points.
-- Tests: pytest suite, Node tests of the label engine, Playwright end-to-end journeys.
+- Tests: pytest suite, Node tests of the label engine, Playwright end-to-end journeys; GitHub
+  Actions CI runs all three.
 - Documentation: AGENTS.md cardinal rules, specification, architecture, export format,
   deployment guide, systemd and environment templates.
 

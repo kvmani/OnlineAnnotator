@@ -22,7 +22,7 @@ function renderTopbar() {
   const right = clear(document.getElementById("topbar-right"));
   if (!app.me) return;
   if (app.meta && app.meta.portal_url) {
-    right.append(h("a", { class: "top-link", href: app.meta.portal_url, title: "Back to the tools portal" }, icon("home", 16), "All tools"));
+    right.append(h("a", { class: "top-link", href: portalHref(app.meta.portal_url), title: "Back to the tools portal" }, icon("home", 16), "All tools"));
   }
   if (isAdmin()) right.append(h("a", { class: "top-link", href: "#/users" }, icon("users", 16), "Users"));
   const helpBtn = h("button", { class: "top-link", type: "button", "aria-haspopup": "menu" }, icon("help", 16), "Help");
@@ -49,6 +49,12 @@ function renderTopbar() {
     ]);
   });
   right.append(userBtn);
+}
+
+// A portal URL starting with ":" (e.g. ":5000/") means "this host, that port", so one
+// setting works from every desk without knowing the server's intranet address.
+function portalHref(url) {
+  return url.startsWith(":") ? `${location.protocol}//${location.hostname}${url}` : url;
 }
 
 let openMenu = null;
