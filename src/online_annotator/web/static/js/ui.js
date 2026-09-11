@@ -184,6 +184,12 @@ document.addEventListener("click", () => {
     openTip = null;
   }
 });
+window.addEventListener("scroll", () => {
+  if (openTip) {
+    openTip.el.remove();
+    openTip = null;
+  }
+}, true);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && openTip) {
     openTip.el.remove();

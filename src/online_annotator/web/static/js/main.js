@@ -199,6 +199,7 @@ setUnauthorizedHandler(() => {
         dlg.close(true);
         await refreshMe();
         toast("Signed in again. You can continue where you were.", "success");
+        window.dispatchEvent(new CustomEvent("oa:reauthenticated"));
       } })),
     onClose: () => {
       reauthOpen = false;

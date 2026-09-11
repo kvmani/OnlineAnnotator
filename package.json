@@ -1,0 +1,12 @@
+{
+  "name": "online-annotator-browser-tests",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Test-only browser automation for Online Annotator; the application itself has no JavaScript dependencies or build step.",
+  "scripts": {
+    "test:browser": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.62.1"
+  }
+}

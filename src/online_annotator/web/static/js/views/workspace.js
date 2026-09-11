@@ -95,6 +95,12 @@ class Workspace {
     fetchBytes(`api/v1/images/${this.image.id}/grey`).then(({ bytes }) => this.editor.setGrey(bytes)).catch(() => {});
     this._keys = (e) => this.onKey(e);
     window.addEventListener("keydown", this._keys);
+    this._reauth = () => {
+      this.saveError = null;
+      if (this.hasUnsaved()) this.saveNow(false);
+      else this.updateSaveState();
+    };
+    window.addEventListener("oa:reauthenticated", this._reauth);
     this.editor.canvas.focus({ preventScroll: true });
   }
 
@@ -917,6 +923,7 @@ class Workspace {
     clearInterval(this.heartbeat);
     clearTimeout(this._saveTimer);
     window.removeEventListener("keydown", this._keys);
+    window.removeEventListener("oa:reauthenticated", this._reauth);
     this.editor.destroy();
   }
 }

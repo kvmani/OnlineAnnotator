@@ -45,6 +45,8 @@ def create_app(settings: Settings | None = None, *, admin_email: str | None = No
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         with session_factory() as db:
+            if settings.demo:  # demo accounts first, so no extra bootstrap admin is created
+                seed_demo(db, settings)
             result = bootstrap_admin(db, settings, admin_email, admin_password)
             if result.created and result.password:
                 logger.warning(
@@ -53,7 +55,6 @@ def create_app(settings: Settings | None = None, *, admin_email: str | None = No
                     "=" * 64, result.email, result.password,
                     settings.data_dir / "initial_admin_password.txt", "=" * 64)
             if settings.demo:
-                seed_demo(db, settings)
                 logger.warning("DEMO MODE: sample accounts with published passwords are active. "
                                "Never use demo mode on a production server.")
         yield

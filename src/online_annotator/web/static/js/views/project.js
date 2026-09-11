@@ -35,7 +35,7 @@ export async function renderProject(view, projectId, tab) {
       h("div", { class: "head-actions" },
         c.total ? h("button", { class: "btn btn-primary", type: "button", onclick: () => startNext(project.id, "annotate"),
           title: "Open the next image that needs work and is not being edited by someone else" }, icon("play"), "Annotate next") : null,
-        canReview() ? h("button", { class: "btn", type: "button", disabled: !c.submitted, onclick: () => startNext(project.id, "review"),
+        canReview() && c.total ? h("button", { class: "btn", type: "button", disabled: !c.submitted, onclick: () => startNext(project.id, "review"),
           title: c.submitted ? "Open the oldest submission waiting for review" : "Nothing waiting for review" },
         icon("review"), `Review next${c.submitted ? ` (${c.submitted})` : ""}`) : null)),
     statusSummary(c));

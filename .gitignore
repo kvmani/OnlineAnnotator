@@ -39,3 +39,9 @@ tmp/
 .DS_Store
 Thumbs.db
 .claude/
+
+# --- Browser test tooling and output
+node_modules/
+test-results/
+playwright-report/
+.e2e-data/
