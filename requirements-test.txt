@@ -1,0 +1,6 @@
+-r requirements.txt
+pytest>=7.4
+httpx>=0.25
+ruff>=0.4
+# Optional: enables the YOLO-segmentation export test.
+opencv-python-headless>=4.7

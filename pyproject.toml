@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "online-annotator"
+dynamic = ["version"]
+description = "Intranet-native, multi-user semantic-segmentation annotation workbench for microstructures."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "K. V. Mani Krishna" }]
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.27",
+    "sqlalchemy>=2.0",
+    "pydantic>=2.5",
+    "python-multipart>=0.0.9",
+    "bcrypt>=4.0",
+    "pyyaml>=6.0",
+    "numpy>=1.24",
+    "pillow>=10.0",
+]
+
+[project.optional-dependencies]
+# YOLO-segmentation polygon export needs contour tracing from OpenCV. Every other
+# feature, including exact COCO (RLE) export, works without it.
+yolo = ["opencv-python-headless>=4.7"]
+dev = ["pytest>=7.4", "httpx>=0.25", "ruff>=0.4"]
+
+[project.scripts]
+online-annotator = "online_annotator.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "online_annotator._version.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+online_annotator = ["web/*.html", "web/static/**/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q"
+filterwarnings = ["error::DeprecationWarning:online_annotator.*"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["B008"]  # FastAPI dependency injection uses call defaults by design

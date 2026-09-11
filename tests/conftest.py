@@ -1,100 +1,114 @@
 from __future__ import annotations
 
-import os
-import shutil
-import tempfile
-from pathlib import Path
+import gzip
+import io
+
+import numpy as np
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from PIL import Image as PILImage
 
-# Set test environment config
-temp_dir = tempfile.mkdtemp(prefix="annotator_test_")
-os.environ["ONLINE_ANNOTATOR_CONFIG"] = str(Path(temp_dir) / "test_config.yml")
+from online_annotator.app import create_app
+from online_annotator.config import load_settings
+from online_annotator.models import LabelClass, Project, User
+from online_annotator.services.auth import hash_password
 
-from backend.app.config import AppConfig, get_config
-from backend.app.db import Base, get_db
-from backend.app.main import create_app
-from backend.app.services.auth_service import create_session_token, get_password_hash
-from backend.app.services.seed_data import seed_database
-from backend.app.models.user import Role, User
-
-# Create test sqlite engine
-test_db_file = Path(temp_dir) / "test.sqlite3"
-test_engine = create_engine(
-    f"sqlite:///{test_db_file}",
-    connect_args={"check_same_thread": False},
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def setup_test_environment():
-    # Update config storage paths
-    cfg = get_config()
-    cfg.storage.data_dir = str(Path(temp_dir) / "data")
-    cfg.storage.images_dir = str(Path(temp_dir) / "data" / "images")
-    cfg.storage.masks_dir = str(Path(temp_dir) / "data" / "masks")
-    cfg.storage.exports_dir = str(Path(temp_dir) / "data" / "exports")
-    cfg.storage.ledger_file = str(Path(temp_dir) / "data" / "ledger.json")
-    cfg.database.url = f"sqlite:///{test_db_file}"
-
-    for p in [cfg.storage.data_dir, cfg.storage.images_dir, cfg.storage.masks_dir, cfg.storage.exports_dir]:
-        Path(p).mkdir(parents=True, exist_ok=True)
-
-    Base.metadata.create_all(bind=test_engine)
-    with TestingSessionLocal() as session:
-        seed_database(session)
-
-    yield
-
-    shutil.rmtree(temp_dir, ignore_errors=True)
+HEADERS = {"X-Requested-With": "OnlineAnnotator"}
+PASSWORDS = {"admin@lab.test": "admin-pass-1", "rev@lab.test": "review-pass-1", "ann@lab.test": "annot-pass-1",
+             "rev2@lab.test": "review-pass-2"}
 
 
 @pytest.fixture
-def db():
-    session = TestingSessionLocal()
-    try:
-        yield session
-    finally:
-        session.close()
+def settings(tmp_path):
+    return load_settings(environ={}, data_dir=tmp_path / "data", secret_key="test-secret")
 
 
 @pytest.fixture
-def client(db):
-    app = create_app()
-
-    def override_get_db():
-        try:
-            yield db
-        finally:
-            pass
-
-    app.dependency_overrides[get_db] = override_get_db
-    with TestClient(app) as test_client:
-        yield test_client
-
-
-@pytest.fixture
-def admin_token(db):
-    user = db.query(User).filter(User.email == "admin@office.local").first()
-    return create_session_token(db, user)
-
-
-@pytest.fixture
-def annotator_token(db):
-    annotator_email = "annotator_1@office.local"
-    user = db.query(User).filter(User.email == annotator_email).first()
-    if not user:
-        user = User(
-            email=annotator_email,
-            full_name="Annotator One",
-            role="annotator",
-            hashed_password=get_password_hash("Pass@123"),
-            is_active=True,
-        )
-        db.add(user)
+def app(settings):
+    application = create_app(settings, admin_email="admin@lab.test", admin_password=PASSWORDS["admin@lab.test"])
+    with TestClient(application) as client:  # runs lifespan (bootstrap)
+        client.close()
+    with application.state.session_factory() as db:
+        for email, role in (("rev@lab.test", "reviewer"), ("ann@lab.test", "annotator"),
+                            ("rev2@lab.test", "reviewer")):
+            db.add(User(email=email, full_name=email.split("@")[0].title(), role=role,
+                        password_hash=hash_password(PASSWORDS[email])))
+        project = Project(name="Hydrides", created_by="admin@lab.test", guidelines="Label hydrides.")
+        project.classes.append(LabelClass(index=1, name="Hydride", color="#FF0000"))
+        project.classes.append(LabelClass(index=2, name="Pore", color="#0000FF"))
+        db.add(project)
         db.commit()
-        db.refresh(user)
-    return create_session_token(db, user)
+    return application
+
+
+def make_client(app, email: str | None = None) -> TestClient:
+    client = TestClient(app, headers=HEADERS)
+    if email:
+        r = client.post("/api/v1/auth/login", json={"email": email, "password": PASSWORDS[email]})
+        assert r.status_code == 200, r.text
+    return client
+
+
+@pytest.fixture
+def admin(app):
+    return make_client(app, "admin@lab.test")
+
+
+@pytest.fixture
+def ann(app):
+    return make_client(app, "ann@lab.test")
+
+
+@pytest.fixture
+def rev(app):
+    return make_client(app, "rev@lab.test")
+
+
+@pytest.fixture
+def rev2(app):
+    return make_client(app, "rev2@lab.test")
+
+
+def png_bytes(arr: np.ndarray) -> bytes:
+    buf = io.BytesIO()
+    PILImage.fromarray(arr).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def sample_image(width=64, height=48, seed=0) -> bytes:
+    rng = np.random.default_rng(seed)
+    arr = rng.integers(150, 220, (height, width), dtype=np.uint8)
+    arr[10:14, 5:50] = 40
+    return png_bytes(arr)
+
+
+@pytest.fixture
+def project_id(app):
+    with app.state.session_factory() as db:
+        return db.query(Project).filter(Project.name == "Hydrides").one().id
+
+
+@pytest.fixture
+def image_id(ann, project_id):
+    r = ann.post(f"/api/v1/projects/{project_id}/images", files=[("files", ("sample one.png", sample_image(),
+                                                                              "image/png"))])
+    assert r.status_code == 200, r.text
+    assert r.json()["added"] == 1
+    return ann.get(f"/api/v1/projects/{project_id}/images").json()["images"][0]["id"]
+
+
+def put_labels(client, image_id: int, labels: np.ndarray, base_revision: int, compress: bool = True):
+    raw = np.ascontiguousarray(labels, dtype=np.uint8).tobytes()
+    headers = {"Content-Type": "application/octet-stream"}
+    if compress:
+        raw = gzip.compress(raw)
+        headers["Content-Encoding"] = "gzip"
+    return client.put(f"/api/v1/images/{image_id}/labels?base_revision={base_revision}", content=raw,
+                      headers=headers)
+
+
+def get_labels(client, image_id: int, version: int | None = None) -> np.ndarray:
+    url = f"/api/v1/images/{image_id}/labels" + (f"?version={version}" if version else "")
+    r = client.get(url)
+    assert r.status_code == 200
+    return np.frombuffer(r.content, dtype=np.uint8)
