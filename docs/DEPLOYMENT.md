@@ -19,15 +19,15 @@ no external services and no JavaScript build. Two supported ways to run it:
 ```bash
 sudo useradd --system --home /var/lib/online-annotator --create-home annotator
 sudo mkdir -p /opt/online-annotator /etc/online-annotator
-sudo tar -xzf online-annotator-1.0.0.tar.gz -C /opt/online-annotator   # or git clone on the internet side
-sudo ln -sfn /opt/online-annotator/OnlineAnnotator-1.0.0 /opt/online-annotator/current
+sudo tar -xzf online-annotator-1.0.1.tar.gz -C /opt/online-annotator   # or git clone on the internet side
+sudo ln -sfn /opt/online-annotator/OnlineAnnotator-1.0.1 /opt/online-annotator/current
 sudo python3 -m venv /opt/online-annotator/venv
 sudo /opt/online-annotator/venv/bin/pip install -r /opt/online-annotator/current/requirements.txt
 sudo cp /opt/online-annotator/current/deploy/online-annotator.env.example /etc/online-annotator/online-annotator.env
 sudo chmod 600 /etc/online-annotator/online-annotator.env      # edit: portal URL, admin e-mail …
 sudo cp /opt/online-annotator/current/deploy/online-annotator.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now online-annotator
-curl -s http://127.0.0.1:5070/api/health    # {"status":"ok","tool_id":"online-annotator","version":"1.0.0"}
+curl -s http://127.0.0.1:5070/api/health    # {"status":"ok","tool_id":"online-annotator","version":"1.0.1"}
 ```
 
 ### First administrator
@@ -54,7 +54,7 @@ python -m online_annotator reset-password someone@lab.example     # also re-enab
 ```yaml
 annotator:
   repo: kvmani/OnlineAnnotator
-  ref: v1.0.0
+  ref: v1.0.1
   port: 5070
   health: /api/health
   public_url_env: ONLINE_ANNOTATOR_URL          # the portal catalog links here

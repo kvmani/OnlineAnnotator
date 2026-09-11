@@ -4,7 +4,7 @@
 images — on your office intranet, in the browser, with no installation for users.**
 
 Part of the office scientific-tools platform (`ml_server`); first customer:
-[HydrideSegmentation](../HydrideSegmentation). Version **1.0.0**.
+[HydrideSegmentation](../HydrideSegmentation). Version **1.0.1**.
 
 ## What it does
 
@@ -65,7 +65,7 @@ variables. Operations, systemd, backups, upgrades: [docs/DEPLOYMENT.md](docs/DEP
 - **ml_server portal** — catalog card `online-annotator` links to `ONLINE_ANNOTATOR_URL`
   (default `http://127.0.0.1:5070`); scientific help at `/tools/online-annotator/help`.
 - **ml_server_deploy** — component `annotator`, port 5070, health `/api/health`.
-- **Health contract** — `GET /api/health` → `{"status": "ok", "tool_id": "online-annotator", "version": "1.0.0"}`.
+- **Health contract** — `GET /api/health` → `{"status": "ok", "tool_id": "online-annotator", "version": "1.0.1"}`.
 - **HydrideSegmentation** — exports feed `prepare_dataset` directly
   ([docs/EXPORT_FORMAT.md](docs/EXPORT_FORMAT.md)); model predictions can be imported as
   pre-annotations.
