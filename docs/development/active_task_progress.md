@@ -1,0 +1,76 @@
+# Active Task Progress Ledger — OnlineAnnotator
+
+> Cardinal rule (inherited from `ml_server/docs/PLATFORM_VISION_AND_GOVERNANCE.md` §3.1):
+> every goal is resumable; no context lives only in chat. Update this file before and after
+> every substantial step, and commit it with the code it describes.
+
+## Goal (set 2026-09-11)
+
+Turn OnlineAnnotator into a state-of-the-art, intranet-deployable semantic-segmentation
+annotation tool: creation, review and export must be easy, intuitive and self-explanatory for
+ordinary users, with inline help at critical points and a dedicated Help menu. Bake cardinal
+principles into AGENTS.md and other docs (aligned with pytex, HydrideSegmentation, ml_server
+practice). Commit + push to GitHub (`kvmani/OnlineAnnotator`), integrate as a tool in
+`ml_server` (catalog, scientific help, deploy manifest), test through a real browser like a
+human, fix usability issues. Done = usable, deployable, maintainable, documented, integrated,
+and shown to work.
+
+## Review findings on the inherited prototype (2026-09-11)
+
+The prototype (FastAPI + vanilla JS, ~7.3k lines, not under git) had fundamental defects:
+
+1. **Masks were not ground truth.** Client "mask" = anti-aliased RGB canvas of class colours,
+   saved verbatim; eraser only deleted whole polygons / stroke points. Semantic-segmentation
+   labels must be exact per-pixel class indices.
+2. **Auth hole.** `/email-otp/request` auto-created any account and returned the OTP in the
+   response (`dev_otp`) whenever SMTP was disabled (the default) → anyone could log in as
+   `admin@office.local`. Hard-coded seeded admin password `Admin@123`.
+3. **Locks not enforced** on draft save/commit; image files, masks and export downloads were
+   unauthenticated.
+4. **Export misrepresented data**: used latest (unapproved) version, silently fell back to
+   exporting *all* images with empty masks, COCO area = bbox area, brush strokes exported as
+   polygons, "numpy"/"yolo"/"coco" options all produced the same zip.
+5. Hard-coded `C:/Users/kvman/HydrideSegmentation/...` path; private sample images copied in.
+6. No packaging, version source, CHANGELOG, security headers, or git history.
+
+Decision: re-architect (keep FastAPI/SQLAlchemy/SQLite-WAL, lease locks, audit ledger ideas).
+
+## Architecture decisions (v1.0.0)
+
+- `src/online_annotator/` package, `python -m online_annotator serve`, console script,
+  single version source `_version.py`, health `{"status","tool_id":"online-annotator","version"}`
+  at `/api/health` (+ `/health`).
+- **Raster-first labels**: canonical annotation = 8-bit label map (0 = background, 1..N classes)
+  stored as PNG. Browser edits a `Uint8Array`, uploads raw bytes (gzip) — no canvas read-back,
+  so no colour management / anti-aliasing / fingerprint-noise corruption. Server validates size
+  and class values.
+- Workflow: new → in_progress → submitted → approved | changes_requested. Submissions create
+  immutable versions (sha256 recorded). Export uses latest **approved** version by default.
+- Lease locks enforced server-side for every mutation + optimistic revision check.
+- Roles: annotator, reviewer, admin. No self-approval unless configured.
+- Auth: password (bcrypt) primary; e-mail OTP only when SMTP configured; no silent account
+  creation; first-run admin bootstrap with random one-time password + forced change.
+- Vanilla ES-module frontend, no build step, no CDN (air-gapped), hash router, relative URLs
+  (works behind a path prefix).
+- Exports: HydrideSegmentation flat pairs (`stem.png` + `stem_mask.png`, binary 0/255 or red RGB),
+  split folders, indexed/colour masks, COCO (RLE, exact), optional YOLO-seg (needs OpenCV),
+  manifest with full provenance.
+- Help: contextual hint bar per tool, `?` popovers at critical decisions, shortcut sheet,
+  first-run quick-start, full in-app Help centre.
+
+## Plan / status
+
+- [x] 0. Survey prototype + sibling repos (ml_server governance, pytex AGENTS, Hydride pairing contract, deploy manifest)
+- [ ] 1. git init, .gitignore, baseline commit, create GitHub repo, push
+- [ ] 2. Governance docs: AGENTS.md (cardinal principles), CLAUDE.md, CONTRIBUTING, CHANGELOG, SPECIFICATIONS, docs/
+- [ ] 3. Backend re-architecture (package, models, auth, locks, labels, workflow, exports, audit, CLI)
+- [ ] 4. Backend tests (pytest) green
+- [ ] 5. Frontend rewrite (dashboard, project, workspace tools, review, export, admin, help)
+- [ ] 6. Browser testing as a human (annotator + reviewer + admin journeys); fix usability issues
+- [ ] 7. ml_server integration (catalog, tool_help, tests) + coordinating ledger; ml_server_deploy manifest
+- [ ] 8. Release v1.0.0: CHANGELOG, tag, push all repos; final verification recorded here
+
+## Current state / next action
+
+- Git: not yet initialised.
+- Next action: step 1.

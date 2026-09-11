@@ -1,0 +1,41 @@
+# --- Runtime state: never commit (user data, databases, uploads, exports, audit logs)
+data/
+/instance/
+*.sqlite3
+*.sqlite3-*
+*.db
+
+# --- Python build output and caches
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+.venv/
+venv/
+
+# --- Local configuration with secrets (config.example.yml is the tracked template)
+config.local.yml
+*.env
+.env
+
+# --- Local inspection output, screenshots, scratch
+output/
+outputs/
+screenshots/
+*.log
+logs/
+tmp/
+
+# --- Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+.claude/
