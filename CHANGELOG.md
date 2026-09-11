@@ -5,6 +5,11 @@ the running version is `src/online_annotator/_version.py`.
 
 ## [Unreleased]
 
+### Fixed
+- Brush and eraser strokes painted only their first disc when the browser delivered an empty
+  coalesced-event list (synthetic input, some browsers); strokes now fall back to the event
+  itself. Verified on a 12-megapixel image (continuous stroke, 8 ms undo, save 0.14 s).
+
 ## [1.0.0] — 2026-09-11
 
 First production release: a re-architecture of the inherited prototype.

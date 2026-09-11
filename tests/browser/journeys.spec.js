@@ -62,8 +62,11 @@ test("an annotator labels an image, sees it saved, and submits it", async ({ pag
   await expect(page.locator(".ws-title .badge")).toHaveText("In progress");
   await expect(page.locator('[data-cov="1"]')).not.toHaveText("");
 
-  // Undo and redo are exact.
+  // A stroke paints a continuous band, not just the disc where it started.
   const covered = await page.locator('[data-cov="1"]').getAttribute("title");
+  expect(Number(covered.replace(/\D/g, ""))).toBeGreaterThan(500);
+
+  // Undo and redo are exact.
   await page.keyboard.press("Control+z");
   await expect(page.locator('[data-cov="1"]')).toHaveText("");
   await page.keyboard.press("Control+y");

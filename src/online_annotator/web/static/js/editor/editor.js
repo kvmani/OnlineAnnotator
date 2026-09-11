@@ -581,7 +581,10 @@ export class Editor {
       this.oy = d.oy + (p.sy - d.sy);
       this.requestDraw();
     } else if (d && d.kind === "paint") {
-      const events = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+      // Coalesced events give smooth strokes on fast pointers, but the list can be
+      // empty (synthetic events, some browsers); then the event itself is used.
+      const coalesced = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
+      const events = coalesced.length ? coalesced : [e];
       for (const ev of events) {
         const q = this.toImage(ev.clientX, ev.clientY);
         this.map.paintSegment(d.last.x, d.last.y, q.x, q.y, this.brushSize, d.value, d.rule);
