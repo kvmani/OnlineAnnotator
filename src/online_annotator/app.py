@@ -81,6 +81,10 @@ def create_app(settings: Settings | None = None, *, admin_email: str | None = No
         response.headers.setdefault("X-Frame-Options", "SAMEORIGIN")
         if path.startswith("/api/") and "Cache-Control" not in response.headers:
             response.headers["Cache-Control"] = "no-store"
+        elif path.startswith("/static/"):
+            # ES-module imports carry no version query, so browsers must revalidate
+            # (cheap 304s via ETag) or an upgrade could run a mix of old and new code.
+            response.headers["Cache-Control"] = "no-cache"
         return response
 
     @app.exception_handler(RequestValidationError)

@@ -213,7 +213,7 @@ def _snapshot(settings: Settings, image: Image, labels: np.ndarray, user: User, 
               status: str, note: str) -> Version:
     number = _next_number(image)
     version = Version(image_id=image.id, number=number, mask_file=f"v{number:04d}.png", kind=kind,
-                      status=status, created_by=user.email, note=note.strip(),
+                      status=status, created_by=user.email, note=note.strip(), created_at=utcnow(),
                       class_pixels=json.dumps(label_ops.class_pixels(labels), sort_keys=True),
                       mask_sha256="")
     version.mask_sha256 = label_ops.save(labels, mask_dir(settings, image) / version.mask_file)
@@ -303,7 +303,7 @@ def review(db: Session, settings: Settings, image: Image, reviewer: User, decisi
     else:
         approved = pending
         approved.status = "approved"
-    approved.reviewed_by, approved.reviewed_at = reviewer.email, now
+    approved.reviewed_by, approved.reviewed_at = reviewer.email, utcnow()
     approved.review_comment = approved.review_comment or comment
     image.status = "approved"
     db.commit()

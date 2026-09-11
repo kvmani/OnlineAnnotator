@@ -64,6 +64,8 @@ def test_hydride_pairs_binary_export_is_exact(ann, rev, project_id, image_id):
     assert manifest["schema"] == "online-annotator.export/1"
     assert rec["approved_by"] == "rev@lab.test" and rec["annotated_by"] == "ann@lab.test"
     assert rec["class_pixels"] == {"1": 180, "2": 16}
+    assert rec["contributors"] == ["ann@lab.test"]
+    assert rec["approved_at"].endswith("+00:00") and rec["approved_at"] >= rec["annotated_at"]
     listed = rev.get(f"/api/v1/projects/{project_id}/exports").json()["exports"]
     assert listed[0]["image_count"] == 1
 

@@ -38,7 +38,7 @@ from sqlalchemy.orm import Session
 
 from .._version import TOOL_ID, __version__
 from ..config import Settings
-from ..models import Export, Image, Project, User, Version, utcnow
+from ..models import Export, Image, Project, User, Version, as_utc, utcnow
 from . import labels as label_ops
 from . import workflow
 
@@ -201,6 +201,11 @@ def _yolo_lines(labels: np.ndarray, class_order: list[int]) -> list[str]:
     return lines
 
 
+def _iso(value) -> str | None:
+    value = as_utc(value)
+    return value.isoformat() if value else None
+
+
 def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")[:48] or "project"
 
@@ -290,10 +295,10 @@ def build_export(db: Session, settings: Settings, project: Project, user: User,
                 "version_status": version.status,
                 "version_kind": version.kind,
                 "annotated_by": version.created_by,
-                "annotated_at": version.created_at.isoformat() if version.created_at else None,
+                "annotated_at": _iso(version.created_at),
+                "contributors": sorted({v.created_by for v in image.versions if v.number <= version.number}),
                 "approved_by": version.reviewed_by if version.status == "approved" else None,
-                "approved_at": (version.reviewed_at.isoformat()
-                                if version.status == "approved" and version.reviewed_at else None),
+                "approved_at": _iso(version.reviewed_at) if version.status == "approved" else None,
                 "class_pixels": pixels,
                 "class_fractions": {k: round(v / total, 6) for k, v in pixels.items()},
             })

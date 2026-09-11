@@ -149,5 +149,8 @@ def interpret_mask_image(
         if matched.all():
             return out, "colour"
         red = (rgb[:, :, 0] >= 200) & (rgb[:, :, 1] <= 60) & (rgb[:, :, 2] <= 60)
+        if not red.any():
+            raise LabelError("Colour mask matches neither the project class colours nor the red-dominant "
+                             "(R>=200, G<=60, B<=60) convention.")
         return np.where(red, import_class, 0).astype(np.uint8), "red-dominant"
     raise LabelError(f"Unsupported mask layout {arr.shape}.")

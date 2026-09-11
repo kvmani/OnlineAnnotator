@@ -61,16 +61,40 @@ Decision: re-architect (keep FastAPI/SQLAlchemy/SQLite-WAL, lease locks, audit l
 ## Plan / status
 
 - [x] 0. Survey prototype + sibling repos (ml_server governance, pytex AGENTS, Hydride pairing contract, deploy manifest)
-- [ ] 1. git init, .gitignore, baseline commit, create GitHub repo, push
+- [~] 1. git init, .gitignore, baseline commit (done: 5c9e2ad). GitHub repo creation BLOCKED by the permission classifier - needs the user's go-ahead (see Blockers)
 - [ ] 2. Governance docs: AGENTS.md (cardinal principles), CLAUDE.md, CONTRIBUTING, CHANGELOG, SPECIFICATIONS, docs/
-- [ ] 3. Backend re-architecture (package, models, auth, locks, labels, workflow, exports, audit, CLI)
-- [ ] 4. Backend tests (pytest) green
-- [ ] 5. Frontend rewrite (dashboard, project, workspace tools, review, export, admin, help)
-- [ ] 6. Browser testing as a human (annotator + reviewer + admin journeys); fix usability issues
+- [x] 3. Backend re-architecture (package, models, auth, locks, labels, workflow, exports, audit, CLI) - commit 568bd0c
+- [x] 4. Backend tests (pytest) green - 51 tests incl. Node-run label-engine tests
+- [x] 5. Frontend rewrite (dashboard, project, workspace tools, review, export, admin, help)
+- [~] 6. Browser testing as a human: annotator + reviewer + export journeys PASS; admin/upload/lock-conflict pending
 - [ ] 7. ml_server integration (catalog, tool_help, tests) + coordinating ledger; ml_server_deploy manifest
 - [ ] 8. Release v1.0.0: CHANGELOG, tag, push all repos; final verification recorded here
 
+## Browser-test log (demo server on :5071, data in the session scratchpad)
+
+Found and fixed during human-style testing:
+- Magic wand grew +-tolerance around the clicked grey level, so an edge click missed the
+  platelet core. Now grows over connected pixels at least as dark (bright) as the seed,
+  dark/bright decided from the 31x31 neighbourhood. Help texts updated; unit test added.
+- Toasts overlapped the workspace hint bar; moved up/left in the workspace.
+- ES-module imports carry no version query: /static now served with Cache-Control: no-cache.
+- Help pages had no breadcrumb; "1 images" plural; brand wrapped on narrow panes; side panel
+  crowded narrow screens -> collapsible panel toggle.
+- Manifest lost the original annotator for reviewer-corrected versions -> `contributors`;
+  timestamps now tz-aware and approved_at >= annotated_at.
+Note: the browser harness's `key`/`type` actions inject stray clicks; drive the workspace with
+DOM events (element.click / PointerEvent / KeyboardEvent) for deterministic tests.
+
+## Blockers
+
+- Creating `github.com/kvmani/OnlineAnnotator` (public, like pytex/ml_server) via the GitHub API
+  was blocked by the auto-mode permission classifier. Needs the user's approval, or the user
+  creates the empty repo; then `git remote add origin https://github.com/kvmani/OnlineAnnotator.git`
+  and `git push -u origin main`.
+
 ## Current state / next action
 
-- Git: not yet initialised.
-- Next action: step 1.
+- Git: local `main`, commits 5c9e2ad (baseline), 568bd0c (backend), + frontend commit.
+- Next: admin journey (users, new project wizard, upload incl. 16-bit TIFF, mask import),
+  lock-conflict with two users, changes-requested loop; then docs (AGENTS.md etc.), ml_server
+  integration, push.
