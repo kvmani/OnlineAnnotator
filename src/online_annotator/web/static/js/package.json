@@ -1,0 +1,5 @@
+{
+  "type": "module",
+  "private": true,
+  "description": "Marks the browser modules as ES modules for Node-based unit tests; not a build."
+}
