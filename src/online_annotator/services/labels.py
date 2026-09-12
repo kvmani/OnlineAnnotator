@@ -154,3 +154,26 @@ def interpret_mask_image(
                              "(R>=200, G<=60, B<=60) convention.")
         return np.where(red, import_class, 0).astype(np.uint8), "red-dominant"
     raise LabelError(f"Unsupported mask layout {arr.shape}.")
+
+
+def decode_mask_file(
+    data: bytes, width: int, height: int, palette: Mapping[int, str], import_class: int
+) -> tuple[np.ndarray, str]:
+    """Read an uploaded mask file into a label map for an image of ``width`` x ``height``.
+
+    The single place an externally produced mask file becomes labels, shared by the
+    per-image and bulk import paths so both apply the same size check and the same
+    interpretation rules. Nothing is resampled: a mask of the wrong size is refused
+    rather than resized, because resizing would invent ground truth.
+    """
+    try:
+        with PILImage.open(io.BytesIO(data)) as pil:
+            arr = np.asarray(pil.convert("RGB") if pil.mode in ("P", "RGBA", "CMYK") else pil)
+    except OSError as exc:
+        raise LabelError(f"not a readable image ({exc}).") from exc
+    if arr.shape[:2] != (height, width):
+        raise LabelError(
+            f"size {arr.shape[1]} x {arr.shape[0]} does not match the image ({width} x {height}). "
+            "Masks are never resized, because resizing would change the ground truth."
+        )
+    return interpret_mask_image(arr, palette, import_class)

@@ -172,6 +172,8 @@ def _store_working(settings: Settings, image: Image, labels: np.ndarray, user: U
     image.working_updated_by = user.email
     image.working_updated_at = utcnow()
     image.working_origin = origin
+    # mask_source is deliberately NOT reset here: correcting an imported mask by hand does
+    # not make the ground truth hand-drawn, and provenance must survive ordinary editing.
 
 
 def save_working(db: Session, settings: Settings, image: Image, user: User, labels: np.ndarray,
@@ -192,8 +194,15 @@ def save_working(db: Session, settings: Settings, image: Image, user: User, labe
 
 
 def import_working(db: Session, settings: Settings, image: Image, user: User, labels: np.ndarray,
-                   origin: str) -> None:
-    """Replace the working copy with an imported pre-annotation (e.g. a model prediction)."""
+                   origin: str, source_file: str = "", source_tool: str = "",
+                   source_remarks: str = "") -> None:
+    """Replace the working copy with a mask produced outside this tool.
+
+    The annotator then corrects it instead of starting from scratch. The image is marked
+    ``mask_source = "imported"`` together with the tool that made the mask and the
+    annotator's remarks, so every later version and export can say the ground truth began
+    as an import rather than as hand-drawn work.
+    """
     if image.status in ("submitted", "approved"):
         raise WorkflowError(f"{image.original_filename} is {image.status}; imports only replace work in progress.")
     state = lock_state(db, image, user)
@@ -201,8 +210,39 @@ def import_working(db: Session, settings: Settings, image: Image, user: User, la
         raise WorkflowError(f"{image.original_filename} is being edited by {state.user_name or state.user_email}.")
     label_ops.validate(labels, allowed_indices(image), image.width, image.height)
     _store_working(settings, image, labels, user, origin)
+    image.mask_source = "imported"
+    image.mask_source_file = source_file[:255]
+    image.mask_source_tool = source_tool.strip()[:200]
+    image.mask_source_remarks = source_remarks.strip()
+    image.mask_imported_by = user.email
+    image.mask_imported_at = utcnow()
     if image.status == "new":
         image.status = "in_progress"
+
+
+def describe_source(image: Image) -> str:
+    """One-line, user-facing summary of where this image's label map came from."""
+    if image.mask_source != "imported":
+        return "Drawn in Online Annotator."
+    parts = [f"Imported from {image.mask_source_file}" if image.mask_source_file else "Imported mask"]
+    if image.mask_source_tool:
+        parts.append(f"made with {image.mask_source_tool}")
+    if image.mask_imported_by:
+        parts.append(f"loaded by {image.mask_imported_by}")
+    return ", ".join(parts) + ", then corrected here."
+
+
+def set_source_remarks(db: Session, image: Image, tool: str | None, remarks: str | None) -> None:
+    """Update the remarks kept alongside an imported mask (never invents an import)."""
+    if image.mask_source != "imported":
+        raise WorkflowError(
+            "This image's annotation was drawn here, not imported, so there is no import to describe."
+        )
+    if tool is not None:
+        image.mask_source_tool = tool.strip()[:200]
+    if remarks is not None:
+        image.mask_source_remarks = remarks.strip()
+    db.commit()
 
 
 def _next_number(image: Image) -> int:
@@ -215,7 +255,10 @@ def _snapshot(settings: Settings, image: Image, labels: np.ndarray, user: User, 
     version = Version(image_id=image.id, number=number, mask_file=f"v{number:04d}.png", kind=kind,
                       status=status, created_by=user.email, note=note.strip(), created_at=utcnow(),
                       class_pixels=json.dumps(label_ops.class_pixels(labels), sort_keys=True),
-                      mask_sha256="")
+                      mask_sha256="",
+                      mask_source=image.mask_source, mask_source_tool=image.mask_source_tool,
+                      mask_source_remarks=image.mask_source_remarks,
+                      mask_source_file=image.mask_source_file)
     version.mask_sha256 = label_ops.save(labels, mask_dir(settings, image) / version.mask_file)
     image.versions.append(version)
     return version
@@ -315,3 +358,10 @@ def restore(db: Session, settings: Settings, image: Image, user: User, version: 
     labels = load_version(settings, image, version)
     save_working(db, settings, image, user, labels, image.working_revision,
                  origin=f"restored from v{version.number}")
+    # The restored pixels carry the provenance frozen with that version, not whatever the
+    # working copy happened to say a moment ago.
+    image.mask_source = version.mask_source
+    image.mask_source_tool = version.mask_source_tool
+    image.mask_source_remarks = version.mask_source_remarks
+    image.mask_source_file = version.mask_source_file
+    db.commit()

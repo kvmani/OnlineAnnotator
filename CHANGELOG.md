@@ -5,6 +5,34 @@ the running version is `src/online_annotator/_version.py`.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-09-12
+
+### Added
+- **Import an existing mask and correct it.** An annotator who already has a mask for a
+  micrograph — from another segmentation tool, an in-house script such as a hydride
+  segmentation program, or a model prediction — can load it as the starting point instead of
+  labelling from scratch. New in the workspace side panel (**Mask source → Import a mask**) for
+  the image being annotated; the project-wide bulk import gained the same provenance fields.
+  Binary (0/255), indexed, class-colour and red-on-black masks are understood; a mask whose size
+  differs from its image is refused rather than resized.
+- **Mask provenance recorded and exported.** Every image and every frozen version now carries
+  `mask_source` (`manual` or `imported`), the tool that produced the original mask, the file it
+  came from, who imported it and when, and free-text **user remarks** (the model version, the
+  settings, known weaknesses). The record is sticky: hand-correcting an imported mask never
+  turns it back into hand-drawn work. Remarks can be edited afterwards
+  (**Edit remarks**, `PATCH /api/v1/images/{id}/mask-source`).
+- Export manifests report `mask_source`, `mask_source_tool`, `mask_source_file` and
+  `mask_source_remarks` per image, so a training pipeline can weight, audit or exclude corrected
+  machine output separately from labels drawn from scratch. These are additive keys; the manifest
+  schema stays `online-annotator.export/1` so existing readers keep working.
+- Help centre, inline `(?)` help and a Playwright journey covering the import flow.
+
+### Changed
+- Database schema version 2. Upgrading adds the provenance columns to an existing database in
+  place; the columns have defaults, so release 1.0.x can still read a migrated database.
+- Restoring an earlier version now restores the provenance frozen with that version, not
+  whatever the working copy happened to say.
+
 ## [1.0.1] — 2026-09-12
 
 ### Fixed

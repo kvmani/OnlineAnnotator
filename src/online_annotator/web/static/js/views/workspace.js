@@ -5,7 +5,7 @@ import { Editor, TOOLS, isTyping } from "../editor/editor.js";
 import { go, setCrumbs, showShortcuts } from "../nav.js";
 import { app, canReview, savePref } from "../state.js";
 import {
-  STATUS_HELP, clear, confirmDialog, fmtDate, fmtPct, fmtRelative, h, helpTip, icon, modal, statusBadge, toast,
+  STATUS_HELP, clear, confirmDialog, field, fmtDate, fmtPct, fmtRelative, h, helpTip, icon, modal, statusBadge, toast,
 } from "../ui.js";
 import { startNext } from "./home.js";
 
@@ -364,7 +364,7 @@ class Workspace {
     clear(this.side);
     this.side.append(this.classesSection(), this.toolOptionsSection(), this.viewSection());
     if (this.editable) this.side.append(this.cleanupSection());
-    this.side.append(this.historySection(), this.guidelinesSection());
+    this.side.append(this.maskSourceSection(), this.historySection(), this.guidelinesSection());
     this.renderToolOptions(this.editor.thresholdState);
   }
 
@@ -604,6 +604,128 @@ class Workspace {
       img.conversion_note ? [h("dt", {}, "Display"), h("dd", {}, img.conversion_note)] : null);
     return this.section("Image & history", "Every submission is kept as an immutable version with its reviewer decision, so the history of the ground truth can always be traced.",
       info, h("a", { href: `api/v1/images/${img.id}/original`, class: "small" }, "Download original file"), list);
+  }
+
+  // Where this image's labels came from, and the way in to importing an existing mask.
+  maskSourceSection() {
+    const img = this.image;
+    const imported = img.mask_source === "imported";
+    const rows = [];
+    if (imported) {
+      rows.push(h("p", { class: "small" },
+        h("strong", {}, "Imported mask, corrected here."),
+        img.mask_source_file ? ` From ${img.mask_source_file}.` : ""));
+      const info = h("dl", { class: "info small" },
+        img.mask_source_tool ? [h("dt", {}, "Made with"), h("dd", {}, img.mask_source_tool)] : null,
+        img.mask_imported_by ? [h("dt", {}, "Imported by"), h("dd", {}, `${img.mask_imported_by.split("@")[0]}, ${fmtRelative(img.mask_imported_at)}`)] : null);
+      if (info.children.length) rows.push(info);
+      if (img.mask_source_remarks) rows.push(h("pre", { class: "guidelines" }, img.mask_source_remarks));
+    } else {
+      rows.push(h("p", { class: "small muted" }, "Drawn here from scratch. If you already have a mask for this image from another tool, import it and correct it instead."));
+    }
+    if (this.editable) {
+      const btn = h("button", { class: "btn btn-small", type: "button" }, icon("download", 16),
+        imported ? "Replace with another mask…" : "Import a mask…");
+      btn.addEventListener("click", () => this.importMaskDialog());
+      const acts = h("div", { class: "card-actions" }, btn);
+      if (imported) {
+        const edit = h("button", { class: "btn btn-small", type: "button" }, "Edit remarks…");
+        edit.addEventListener("click", () => this.editMaskRemarksDialog());
+        acts.append(edit);
+      }
+      rows.push(acts);
+    }
+    return this.section("Mask source",
+      "Says whether these labels were drawn here or started as a mask made by another tool. The answer travels with every submitted version into the export manifest, so anyone training on this dataset can tell hand-drawn ground truth from corrected machine output.",
+      ...rows);
+  }
+
+  importMaskDialog() {
+    const input = h("input", { type: "file", accept: ".png,.tif,.tiff,.bmp" });
+    const cls = h("select", {}, this.classes.map((c) => h("option", { value: c.index }, `${c.index} · ${c.name}`)));
+    const tool = h("input", { type: "text", maxlength: "200", value: this.image.mask_source_tool || "", placeholder: "e.g. HydrideSegmentation v2.3, ImageJ threshold, in-house script" });
+    const remarks = h("textarea", { rows: "3", maxlength: "4000", placeholder: "e.g. Model run of 2026-09-10; misses faint hydride tips near grain boundaries." }, this.image.mask_source_remarks || "");
+    const result = h("div");
+    const body = h("div", { class: "stack" },
+      h("p", {}, "Load a mask you already have for ", h("strong", {}, this.image.stem), " and correct it here, instead of labelling from scratch."),
+      h("ul", { class: "compact small" },
+        h("li", {}, "It must be exactly ", h("strong", {}, `${this.image.width} × ${this.image.height}`), " pixels. A mask of any other size is refused rather than resized, because resizing would change the ground truth."),
+        h("li", {}, "Accepted: black/white (0/255), class numbers (indexed), the project's class colours, or red-on-black."),
+        h("li", {}, "This replaces the labels currently on screen. Earlier submitted versions stay in the history.")),
+      field("Mask file", input),
+      field("Black/white and red masks become class", cls, "Binary and red masks have only one foreground; choose which class it means."),
+      field("Which tool made this mask?", tool, "Recorded with the image and written into the export manifest."),
+      field("Remarks (optional)", remarks, "Anything worth knowing: the model version, settings, known weaknesses. Kept with the image and exported."),
+      result);
+    modal({
+      title: "Import an existing mask",
+      body,
+      wide: true,
+      actions: [
+        { label: "Cancel" },
+        {
+          label: "Import",
+          kind: "primary",
+          onClick: async () => {
+            if (!input.files.length) {
+              toast("Choose a mask file first.", "info");
+              return true; // keep open
+            }
+            if (this.hasUnsaved()) await this.saveNow(false);
+            const fd = new FormData();
+            fd.append("file", input.files[0], input.files[0].name);
+            fd.append("import_class", cls.value);
+            fd.append("source_tool", tool.value);
+            fd.append("remarks", remarks.value);
+            try {
+              const res = await api.form(`api/v1/images/${this.image.id}/mask-import`, fd);
+              this.image = res.image;
+              this.editor.replaceLabels(await this.loadLabels());
+              this.changeCount = this.savedCount = 0;
+              this.updateCoverage();
+              this.renderTop();
+              this.renderSide();
+              toast(res.message, "success");
+              return false; // close the dialog
+            } catch (err) {
+              clear(result).append(h("div", { class: "alert alert-error" }, err.message));
+              return true; // keep it open so the message is readable
+            }
+          },
+        },
+      ],
+    });
+  }
+
+  editMaskRemarksDialog() {
+    const tool = h("input", { type: "text", maxlength: "200", value: this.image.mask_source_tool || "" });
+    const remarks = h("textarea", { rows: "4", maxlength: "4000" }, this.image.mask_source_remarks || "");
+    modal({
+      title: "Remarks about the imported mask",
+      body: h("div", { class: "stack" },
+        field("Which tool made this mask?", tool),
+        field("Remarks", remarks, "Kept with the image and written into the export manifest.")),
+      actions: [
+        { label: "Cancel" },
+        {
+          label: "Save",
+          kind: "primary",
+          onClick: async () => {
+            try {
+              const res = await api.patch(`api/v1/images/${this.image.id}/mask-source`,
+                { source_tool: tool.value, remarks: remarks.value });
+              this.image = res.image;
+              this.renderSide();
+              toast("Remarks saved.", "success");
+              return false; // close the dialog
+            } catch (err) {
+              toast(err.message, "error");
+              return true; // keep it open so the text is not lost
+            }
+          },
+        },
+      ],
+    });
   }
 
   guidelinesSection() {

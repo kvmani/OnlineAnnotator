@@ -30,6 +30,12 @@ IMAGE_STATUSES = ("new", "in_progress", "submitted", "changes_requested", "appro
 SPLITS = ("unassigned", "train", "val", "test")
 VERSION_STATUSES = ("submitted", "approved", "changes_requested", "withdrawn", "superseded")
 
+# Where the label map originally came from. "manual" = drawn from scratch in this tool;
+# "imported" = an externally produced mask (another segmentation tool, a model prediction)
+# was loaded as the starting point and then corrected here. The distinction is scientific
+# provenance, so it is sticky: correcting an imported mask by hand never makes it "manual".
+MASK_SOURCES = ("manual", "imported")
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -154,6 +160,14 @@ class Image(Base):
     working_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     working_origin: Mapped[str] = mapped_column(String(255), default="")
 
+    # Provenance of the working label map (see MASK_SOURCES). Sticky across hand-correction.
+    mask_source: Mapped[str] = mapped_column(String(20), default="manual")
+    mask_source_tool: Mapped[str] = mapped_column(String(200), default="")
+    mask_source_remarks: Mapped[str] = mapped_column(Text, default="")
+    mask_source_file: Mapped[str] = mapped_column(String(255), default="")
+    mask_imported_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    mask_imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     project: Mapped[Project] = relationship(back_populates="images")
     versions: Mapped[list[Version]] = relationship(
         back_populates="image", cascade="all, delete-orphan", order_by="Version.number"
@@ -199,6 +213,13 @@ class Version(Base):
     reviewed_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     review_comment: Mapped[str] = mapped_column(Text, default="")
+
+    # Frozen copy of the provenance the working map carried when this version was cut,
+    # so an immutable submission can always answer "was this hand-drawn or imported?".
+    mask_source: Mapped[str] = mapped_column(String(20), default="manual")
+    mask_source_tool: Mapped[str] = mapped_column(String(200), default="")
+    mask_source_remarks: Mapped[str] = mapped_column(Text, default="")
+    mask_source_file: Mapped[str] = mapped_column(String(255), default="")
 
     image: Mapped[Image] = relationship(back_populates="versions")
 

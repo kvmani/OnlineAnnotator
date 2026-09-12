@@ -2,14 +2,11 @@
 
 from __future__ import annotations
 
-import io
 from dataclasses import asdict
 from pathlib import Path
 
-import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from PIL import Image as PILImage
 from sqlalchemy.orm import Session
 
 from ..config import Settings
@@ -211,12 +208,16 @@ def next_image(project_id: int, mode: str = "annotate", after: int | None = None
 
 @router.post("/projects/{project_id}/masks")
 async def import_masks(project_id: int, files: list[UploadFile] = File(...), import_class: int | None = Form(None),
+                       source_tool: str = Form(""), remarks: str = Form(""),
                        db: Session = Depends(get_db), user: User = Depends(active_user),
                        settings: Settings = Depends(get_settings)) -> dict:
-    """Load masks (e.g. model predictions) as the working copy of matching images.
+    """Load existing masks in bulk as the working copies of matching images.
 
-    A mask ``<stem>_mask.png`` or ``<stem>.png`` is matched to the image with that stem
-    or original filename stem.
+    For a folder of masks already produced elsewhere -- another segmentation tool, an
+    in-house script, model predictions -- so annotators correct them instead of starting
+    from scratch. A mask ``<stem>_mask.png`` or ``<stem>.png`` is matched to the image with
+    that stem or original filename stem. ``source_tool`` and ``remarks`` are recorded on
+    every image the batch touches.
     """
     project = get_project(project_id, db)
     classes = {c.index: c.color for c in project.classes}
@@ -235,24 +236,21 @@ async def import_masks(project_id: int, files: list[UploadFile] = File(...), imp
             errors.append(f"{name}: no image called {key!r} in this project.")
             continue
         try:
-            with PILImage.open(io.BytesIO(await upload.read())) as pil:
-                arr = np.asarray(pil.convert("RGB") if pil.mode in ("P", "RGBA", "CMYK") else pil)
-            if arr.shape[:2] != (img.height, img.width):
-                raise label_ops.LabelError(
-                    f"size {arr.shape[1]} x {arr.shape[0]} does not match the image ({img.width} x {img.height}).")
-            labels_arr, kind = label_ops.interpret_mask_image(arr, classes, target)
-            workflow.import_working(db, settings, img, user, labels_arr, origin=f"imported from {name} ({kind})")
+            labels_arr, kind = label_ops.decode_mask_file(await upload.read(), img.width, img.height,
+                                                          classes, target)
+            workflow.import_working(db, settings, img, user, labels_arr,
+                                    origin=f"imported from {name} ({kind})", source_file=name,
+                                    source_tool=source_tool, source_remarks=remarks)
             db.commit()
             imported.append(f"{name} -> {img.stem} ({kind} mask)")
         except (label_ops.LabelError, workflow.WorkflowError) as exc:
             db.rollback()
             errors.append(f"{name}: {exc}")
-        except OSError as exc:
-            errors.append(f"{name}: not a readable image ({exc}).")
     if imported:
         audit.record(db, settings.audit_file, user.email, "masks_imported",
                      f"Imported {len(imported)} pre-annotation mask(s) into {project.name}.",
-                     project_id=project.id, details={"files": imported})
+                     project_id=project.id,
+                     details={"files": imported, "source_tool": source_tool, "remarks": remarks})
     return {"imported": imported, "errors": errors}
 
 

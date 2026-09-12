@@ -108,6 +108,10 @@ DOM events (element.click / PointerEvent / KeyboardEvent) for deterministic test
 - ml_server `main` already failed its own pre-commit hooks on ~30 unrelated files (vendor
   bundles, trailing whitespace, black) before this goal; left untouched (not in scope).
   Only files changed by this goal were formatted with the pinned black 23.7.
+- Resolved on 2026-09-12 (ml_server 2343fec): the whitespace/EOF hooks were rewriting vendored
+  bundles and the EBSD fixture (now excluded), isort had no config so it fought black forever
+  (now `profile = "black"` at 100 columns), and one unused import failed flake8. CI is green
+  end to end for the first time: pre-commit, `pytest -q` (82) and the docker build all run.
 
 ## Outcome — GOAL COMPLETE (2026-09-12)
 
@@ -120,3 +124,84 @@ DOM events (element.click / PointerEvent / KeyboardEvent) for deterministic test
 - Follow-ups (not blocking): ml_server CI fails at pre-commit on pre-existing files (suggested as
   a separate task); possible future features: label overlay in gallery thumbnails, pinch-zoom for
   tablets, inter-annotator agreement metrics.
+
+---
+
+# Goal (set 2026-09-12) — import pre-existing masks and record their provenance
+
+## Objective
+
+Annotators should not have to start from scratch when a mask for a micrograph already exists —
+produced by an external tool, an in-house script (for example the user's own hydride
+segmentation program) or a model. They import it, correct its mistakes, and the metadata
+records that the original source of the mask was **imported**, together with **user remarks**
+about the tool used. Release it and roll it into the ml_server_deploy suite.
+
+## Decisions
+
+1. **Provenance is structured, not a free-text origin string.** 1.0.x had only
+   `Image.working_origin` ("imported from x.png (binary)"), which no consumer could rely on.
+   Added `mask_source` (`manual` | `imported`), `mask_source_tool`, `mask_source_remarks`,
+   `mask_source_file`, `mask_imported_by`, `mask_imported_at` on `Image`, and the first four
+   frozen onto `Version` at snapshot time.
+2. **Provenance is sticky.** Hand-correcting an imported mask does not make it `manual`;
+   that is the whole point of the record (cardinal rule 1, traceability). Only an explicit
+   restore of a manual version returns the image to `manual`, and it does so by copying that
+   version's frozen provenance along with its pixels.
+3. **Per-image import, not just bulk.** 1.0.x had a project-wide bulk import only, which is a
+   reviewer/admin batch operation. The annotator who is looking at one image now imports from
+   the workspace side panel (**Mask source**), which is where the need actually arises.
+   Both paths share `labels.decode_mask_file`, so the size check and interpretation rules
+   cannot drift apart.
+4. **No silent conversions.** A mask whose size differs from its image is refused with a message
+   saying masks are never resized, because resizing would change the ground truth. Unknown grey
+   values and unmatched colours are refused rather than guessed (unchanged from 1.0.x).
+5. **Export manifest keys are additive; schema stays `online-annotator.export/1`.** Bumping the
+   schema string would break consumers that assert on it (HydrideSegmentation), while new keys
+   are ignored by existing readers. Recorded here because AGENTS.md lists the manifest as a
+   contract needing a deliberate decision.
+6. **Schema version 2 with an in-place additive migration.** `create_all` only creates missing
+   tables, so `db.ADDED_COLUMNS` now drives `ALTER TABLE ... ADD COLUMN` for databases written by
+   1.0.x. Every column has a default, so 1.0.x can still read a migrated database (one release
+   of backward readability, as the contract requires).
+
+## Completed work
+
+- `models.py`: provenance columns on `Image` and `Version`; `MASK_SOURCES`.
+- `db.py`: `SCHEMA_VERSION = 2`, `ADDED_COLUMNS`, `_add_missing_columns`, logged on upgrade.
+- `services/labels.py`: `decode_mask_file` (shared decode + size check).
+- `services/workflow.py`: `import_working` records provenance; `_snapshot` freezes it;
+  `restore` restores it; `describe_source`; `set_source_remarks`.
+- `api/images.py`: `POST /images/{id}/mask-import`, `PATCH /images/{id}/mask-source`.
+- `api/projects.py`: bulk import takes `source_tool` and `remarks`, shares the decoder.
+- `api/serialize.py`, `services/exports.py`: provenance in API responses and the manifest.
+- UI: **Mask source** side section in the workspace (badge, tool, remarks, who and when),
+  import dialog, edit-remarks dialog; tool and remarks fields on the bulk import dialog;
+  Help centre section "Starting from masks you already have".
+- Docs: `SPECIFICATIONS.md` (capability + three endpoints), `docs/EXPORT_FORMAT.md`
+  (manifest keys and their meaning), `CHANGELOG.md` 1.1.0.
+
+## Verification record (2026-09-12)
+
+| Check | Result |
+| --- | --- |
+| `python -m pytest` | 71 passed (51 pre-existing + 20 new in `tests/test_mask_import.py`) |
+| `npm run test:browser` (Playwright, Chromium) | 7 passed, including the new import journey |
+| `ruff check src tests` | clean |
+| Schema migration | tested against a database rewound to schema 1: columns added, idempotent |
+| Visual check | workspace screenshot: imported mask overlaid, panel shows file/tool/remarks |
+
+New tests cover: binary/indexed/colour/red-dominant interpretation, refusal of a wrong-sized
+mask and of unreadable or ambiguous files, provenance surviving hand-correction, provenance
+frozen into a submitted version, restore returning manual provenance, remarks editing and its
+refusal on hand-drawn images, approved images never overwritten, lease held by someone else,
+the audit entry, bulk import provenance, and the export manifest.
+
+## Git state
+
+- OnlineAnnotator `main`: 1.1.0, tag `v1.1.0`, pushed.
+- ml_server_deploy: `annotator` component `ref` bumped to `v1.1.0`, suite released.
+
+## Next action
+
+- None; goal complete. Follow-ups unchanged from the previous goal.

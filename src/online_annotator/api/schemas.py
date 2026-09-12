@@ -78,6 +78,13 @@ class BulkImageUpdateBody(BaseModel):
     assigned_to: str | None = None
 
 
+class MaskRemarksBody(BaseModel):
+    """Notes about an imported mask: which tool made it and anything the annotator wants recorded."""
+
+    source_tool: str | None = Field(default=None, max_length=200)
+    remarks: str | None = Field(default=None, max_length=4000)
+
+
 class SubmitBody(BaseModel):
     note: str = ""
 

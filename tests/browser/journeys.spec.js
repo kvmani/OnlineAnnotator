@@ -194,3 +194,88 @@ test("every button has an accessible name", async ({ page }) => {
     expect(unnamed, hash).toEqual([]);
   }
 });
+
+test("an annotator imports an existing mask, corrects it and the source is recorded", async ({ page }) => {
+  const problems = watchConsole(page);
+  await signIn(page, "admin@demo.local");
+
+  // A project with one image of a size we control, so the mask can match it exactly.
+  await page.goto("/#/");
+  await page.getByRole("button", { name: "New project" }).click();
+  const wizard = page.getByRole("dialog", { name: "New project" });
+  await wizard.getByLabel("Project name").fill("E2E imported masks");
+  await wizard.getByRole("button", { name: "Create project" }).click();
+  await expect(page.getByRole("heading", { name: "E2E imported masks" })).toBeVisible();
+
+  await page.locator(".empty").getByRole("button", { name: "Upload images" }).click();
+  await page.evaluate(async () => {
+    const c = document.createElement("canvas");
+    c.width = 120;
+    c.height = 90;
+    const g = c.getContext("2d");
+    g.fillStyle = "#bbb";
+    g.fillRect(0, 0, 120, 90);
+    g.fillStyle = "#222";
+    g.fillRect(10, 40, 100, 6);
+    const blob = await new Promise((r) => c.toBlob(r, "image/png"));
+    const dt = new DataTransfer();
+    dt.items.add(new File([blob], "hydride field.png", { type: "image/png" }));
+    document.querySelector(".dropzone").dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+  });
+  const upload = page.getByRole("dialog", { name: /Upload images/ });
+  await upload.getByRole("button", { name: "Upload", exact: true }).click();
+  await expect(upload.locator(".alert")).toContainText("1 image added");
+  await upload.getByRole("button", { name: "Close" }).first().click();
+
+  // Open it: nothing is labelled yet and the panel says so.
+  await page.locator(".image-card").first().click();
+  await openedImage(page);
+  await expect(page.locator(".ws-side")).toContainText("Drawn here from scratch");
+
+  // Import a black-and-white mask produced by some other tool.
+  await page.getByRole("button", { name: "Import a mask…" }).click();
+  const dialog = page.getByRole("dialog", { name: "Import an existing mask" });
+  await expect(dialog).toContainText("120 × 90");
+  await dialog.evaluate(async (root) => {
+    const c = document.createElement("canvas");
+    c.width = 120;
+    c.height = 90;
+    const g = c.getContext("2d");
+    g.fillStyle = "#000";
+    g.fillRect(0, 0, 120, 90);
+    g.fillStyle = "#fff";
+    g.fillRect(10, 40, 100, 6);
+    const blob = await new Promise((r) => c.toBlob(r, "image/png"));
+    const input = root.querySelector('input[type="file"]');
+    const dt = new DataTransfer();
+    dt.items.add(new File([blob], "hydride field_mask.png", { type: "image/png" }));
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await dialog.locator('input[type="text"]').fill("HydrideSegmentation v2.3");
+  await dialog.locator("textarea").fill("Model run of 2026-09-10; misses faint tips.");
+  await dialog.getByRole("button", { name: "Import", exact: true }).click();
+
+  await expect(page.locator(".toast").first()).toContainText("binary mask");
+  await expect(page.locator(".ws-side")).toContainText("Imported mask, corrected here");
+  await expect(page.locator(".ws-side")).toContainText("HydrideSegmentation v2.3");
+  await expect(page.locator(".ws-side")).toContainText("misses faint tips");
+  // The imported pixels are on the canvas, so there is coverage before any drawing.
+  await expect(page.locator('[data-cov="1"]')).not.toHaveText("");
+  const beforeCorrection = await page.locator('[data-cov="1"]').getAttribute("title");
+
+  // Correcting it by hand must not turn it back into hand-drawn work.
+  await paintStroke(page, 30);
+  await expect(page.locator(".save-state")).toContainText("Saved", { timeout: 10_000 });
+  expect(await page.locator('[data-cov="1"]').getAttribute("title")).not.toEqual(beforeCorrection);
+  await expect(page.locator(".ws-side")).toContainText("Imported mask, corrected here");
+
+  // The remarks can be corrected afterwards.
+  await page.getByRole("button", { name: "Edit remarks…" }).click();
+  const remarksDialog = page.getByRole("dialog", { name: /Remarks about the imported mask/ });
+  await remarksDialog.locator("textarea").fill("Re-run with the fixed threshold.");
+  await remarksDialog.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator(".ws-side")).toContainText("Re-run with the fixed threshold");
+
+  expect(problems).toEqual([]);
+});

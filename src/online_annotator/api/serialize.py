@@ -41,7 +41,9 @@ def version(v: Version) -> dict[str, Any]:
     return {"id": v.id, "number": v.number, "kind": v.kind, "status": v.status, "created_by": v.created_by,
             "created_at": iso(v.created_at), "note": v.note, "reviewed_by": v.reviewed_by,
             "reviewed_at": iso(v.reviewed_at), "review_comment": v.review_comment,
-            "class_pixels": v.pixels, "mask_sha256": v.mask_sha256}
+            "class_pixels": v.pixels, "mask_sha256": v.mask_sha256,
+            "mask_source": v.mask_source, "mask_source_tool": v.mask_source_tool,
+            "mask_source_remarks": v.mask_source_remarks, "mask_source_file": v.mask_source_file}
 
 
 def image(db: Session, img: Image, viewer: User, detail: bool = False) -> dict[str, Any]:
@@ -53,7 +55,7 @@ def image(db: Session, img: Image, viewer: User, detail: bool = False) -> dict[s
         "assigned_to": img.assigned_to, "notes": img.notes, "uploaded_by": img.uploaded_by,
         "created_at": iso(img.created_at), "working_revision": img.working_revision,
         "working_updated_by": img.working_updated_by, "working_updated_at": iso(img.working_updated_at),
-        "class_pixels": img.class_pixels, "lock": asdict(lock),
+        "class_pixels": img.class_pixels, "lock": asdict(lock), "mask_source": img.mask_source,
         "latest_version": version(last) if last else None,
         "thumb_url": f"api/v1/images/{img.id}/thumb?r={img.working_revision}",
     }
@@ -61,6 +63,10 @@ def image(db: Session, img: Image, viewer: User, detail: bool = False) -> dict[s
         out.update({
             "source_mode": img.source_mode, "conversion_note": img.conversion_note,
             "working_origin": img.working_origin, "sha256": img.sha256,
+            "mask_source_tool": img.mask_source_tool, "mask_source_remarks": img.mask_source_remarks,
+            "mask_source_file": img.mask_source_file, "mask_imported_by": img.mask_imported_by,
+            "mask_imported_at": iso(img.mask_imported_at),
+            "mask_source_description": workflow.describe_source(img),
             "versions": [version(v) for v in sorted(img.versions, key=lambda v: -v.number)],
             "display_url": f"api/v1/images/{img.id}/display",
         })

@@ -12,7 +12,10 @@ In scope:
 - pixel-exact labelling of one or more classes per project, with assisted tools;
 - a two-person review workflow producing immutable, approved versions;
 - multi-user operation with exclusive editing leases;
-- import of model predictions as pre-annotations (active-learning loop);
+- import of an existing mask — from another segmentation tool, an in-house script or a model
+  prediction — as the starting point for correction, either in bulk or for one image from the
+  workspace, with the originating tool and the user's remarks recorded as `mask_source`
+  provenance that follows the labels into every version and export;
 - export of approved data in HydrideSegmentation, split-folder, COCO and YOLO forms with a
   provenance manifest;
 - self-explanatory UI with inline help and an in-app Help centre.
@@ -115,7 +118,9 @@ HttpOnly cookie (or `Authorization: Bearer <token>`).
 | GET/POST `/projects/{id}/images` | list / multipart upload (`files`, `split`) | any |
 | POST `/projects/{id}/images/bulk` | split / assignment for many images | reviewer |
 | GET `/projects/{id}/next?mode=annotate|review&after=` | next image id | any / reviewer |
-| POST `/projects/{id}/masks` | import pre-annotation masks (`files`, `import_class`) | any |
+| POST `/projects/{id}/masks` | import pre-annotation masks in bulk (`files`, `import_class`, `source_tool`, `remarks`) | any |
+| POST `/images/{id}/mask-import` | import one existing mask as this image's working copy (`file`, `import_class`, `source_tool`, `remarks`) | any |
+| PATCH `/images/{id}/mask-source` | edit the tool name and remarks recorded for an imported mask | any |
 | GET `/projects/{id}/activity`, `/projects/{id}/summary` | audit trail; approved class fractions | any |
 | POST `/projects/{id}/exports/preview`, `/projects/{id}/exports`; GET `/projects/{id}/exports`; GET `/exports/{id}/download` | datasets | reviewer (list/download: any) |
 | GET/PATCH/DELETE `/images/{id}` | detail incl. versions and lease; notes/split/assignee; delete (admin) | any |

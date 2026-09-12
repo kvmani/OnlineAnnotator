@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import io
 from dataclasses import asdict
+from pathlib import PurePosixPath
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from PIL import Image as PILImage
 from sqlalchemy.orm import Session
@@ -18,7 +19,7 @@ from ..services import labels as label_ops
 from ..services import projects as project_ops
 from . import serialize
 from .deps import active_user, admin, current_user, get_image, get_settings, reviewer
-from .schemas import ImageUpdateBody, ReviewBody, SubmitBody
+from .schemas import ImageUpdateBody, MaskRemarksBody, ReviewBody, SubmitBody
 
 router = APIRouter(prefix="/api/v1/images", tags=["images"])
 PRIVATE_CACHE = {"Cache-Control": "private, max-age=3600"}
@@ -229,6 +230,61 @@ def review(image_id: int, body: ReviewBody, db: Session = Depends(get_db), user:
     verb = "Approved" if body.decision == "approve" else "Requested changes on"
     audit.record(db, settings.audit_file, user.email, body.decision, f"{verb} {img.stem} v{version.number}.",
                  project_id=img.project_id, image_id=img.id, details={"comment": body.comment})
+    return {"image": serialize.image(db, img, user, detail=True)}
+
+
+@router.post("/{image_id}/mask-import")
+async def import_mask(image_id: int, file: UploadFile = File(...), import_class: int | None = Form(None),
+                      source_tool: str = Form(""), remarks: str = Form(""),
+                      db: Session = Depends(get_db), user: User = Depends(active_user),
+                      settings: Settings = Depends(get_settings)) -> dict:
+    """Load one externally produced mask as this image's working copy, to be corrected here.
+
+    For annotators who already have a mask for this micrograph -- from another segmentation
+    tool, an in-house script or a model prediction -- and want to fix its mistakes instead of
+    labelling from scratch. The image records that its annotation was imported, which tool
+    produced it and the annotator's remarks; that provenance follows every submitted version
+    into the export manifest.
+    """
+    img = get_image(image_id, db)
+    classes = {c.index: c.color for c in img.project.classes}
+    if not classes:
+        raise HTTPException(400, "This project has no classes yet, so a mask cannot be interpreted.")
+    target = import_class if import_class in classes else min(classes)
+    name = PurePosixPath((file.filename or "mask").replace("\\", "/")).name
+    try:
+        labels_arr, kind = label_ops.decode_mask_file(await file.read(), img.width, img.height, classes, target)
+        workflow.import_working(db, settings, img, user, labels_arr,
+                                origin=f"imported from {name} ({kind})", source_file=name,
+                                source_tool=source_tool, source_remarks=remarks)
+        db.commit()
+    except label_ops.LabelError as exc:
+        db.rollback()
+        raise HTTPException(400, f"{name}: {exc}") from exc
+    except workflow.WorkflowError as exc:
+        db.rollback()
+        raise _workflow_error(exc) from exc
+    audit.record(db, settings.audit_file, user.email, "mask_imported",
+                 f"Imported {name} ({kind} mask) as the working copy of {img.stem}.",
+                 project_id=img.project_id, image_id=img.id,
+                 details={"file": name, "kind": kind, "source_tool": source_tool, "remarks": remarks})
+    return {"image": serialize.image(db, img, user, detail=True), "kind": kind,
+            "message": f"Loaded {name} as a {kind} mask. Correct it, then submit for review."}
+
+
+@router.patch("/{image_id}/mask-source")
+def update_mask_source(image_id: int, body: MaskRemarksBody, db: Session = Depends(get_db),
+                       user: User = Depends(active_user),
+                       settings: Settings = Depends(get_settings)) -> dict:
+    """Edit the tool name and remarks recorded for an imported mask."""
+    img = get_image(image_id, db)
+    try:
+        workflow.set_source_remarks(db, img, body.source_tool, body.remarks)
+    except workflow.WorkflowError as exc:
+        raise _workflow_error(exc) from exc
+    audit.record(db, settings.audit_file, user.email, "mask_source_updated",
+                 f"Updated the import remarks for {img.stem}.", project_id=img.project_id, image_id=img.id,
+                 details={"source_tool": img.mask_source_tool, "remarks": img.mask_source_remarks})
     return {"image": serialize.image(db, img, user, detail=True)}
 
 

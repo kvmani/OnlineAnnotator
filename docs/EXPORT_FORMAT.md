@@ -101,6 +101,9 @@ One `.txt` per image, one line per outer contour: `<class index − 1> x1 y1 x2 
     "image_sha256": "…", "original_sha256": "…", "mask_png_sha256": "…", "label_sha256": "…",
     "conversion_note": "",
     "version": 2, "version_status": "approved", "version_kind": "reviewer_edit",
+    "mask_source": "imported", "mask_source_tool": "HydrideSegmentation v2.3",
+    "mask_source_file": "sample_01_mask.png",
+    "mask_source_remarks": "Model run of 2026-09-10; misses faint tips near grain boundaries.",
     "annotated_by": "reviewer@lab.example", "annotated_at": "…+00:00",
     "contributors": ["annotator@lab.example", "reviewer@lab.example"],
     "approved_by": "reviewer@lab.example", "approved_at": "…+00:00",
@@ -108,6 +111,15 @@ One `.txt` per image, one line per outer contour: `<class index − 1> x1 y1 x2 
   }]
 }
 ```
+
+`mask_source` says where the ground truth started: `"manual"` for labels drawn from scratch in
+Online Annotator, `"imported"` when an externally produced mask (another segmentation tool, an
+in-house script, a model prediction) was loaded and then corrected by an annotator.
+`mask_source_tool`, `mask_source_file` and `mask_source_remarks` are what the importing user
+recorded about it; all three are empty strings for `"manual"`. The value is frozen when the
+version is created and never changes afterwards, and hand-correcting an imported mask does not
+make it `"manual"` — so a training pipeline can weight, audit or exclude corrected machine
+output separately from labels drawn from scratch.
 
 `label_sha256` hashes the label values themselves (`"<w>x<h>:"` + raw bytes), independent of PNG
 encoder settings, and equals the version's `mask_sha256` in the application database.

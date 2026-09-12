@@ -293,6 +293,8 @@ function uploadDialog(project, onDone) {
 function importMasksDialog(project, onDone) {
   const input = h("input", { type: "file", multiple: true, accept: ".png,.tif,.tiff,.bmp" });
   const cls = h("select", {}, project.classes.map((c) => h("option", { value: c.index }, `${c.index} · ${c.name}`)));
+  const tool = h("input", { type: "text", maxlength: "200", placeholder: "e.g. HydrideSegmentation v2.3, ImageJ threshold, in-house script" });
+  const remarks = h("textarea", { rows: "3", maxlength: "4000", placeholder: "e.g. Model run of 2026-09-10; tends to miss faint hydride tips near grain boundaries." });
   const result = h("div");
   const body = h("div", { class: "stack" },
     h("p", {}, "Use this to start from existing masks, for example predictions from a HydrideSegmentation model. Annotators then only correct the mistakes."),
@@ -302,6 +304,8 @@ function importMasksDialog(project, onDone) {
       h("li", {}, "The mask becomes the image's working copy (status In progress). Submitted and approved images are never overwritten.")),
     field("Masks", input),
     field("Black/white and red masks become class", cls, "Binary and red masks have only one foreground; choose which class it means."),
+    field("Which tool made these masks?", tool, "Recorded with every image in this batch and written into the export manifest, so anyone reading the dataset later knows the labels started as this tool's output rather than as hand-drawn work."),
+    field("Remarks (optional)", remarks, "Anything worth knowing about these masks: the model version, known weaknesses, the settings used. Annotators see it while they correct the mask."),
     result);
   modal({
     title: "Import masks as a starting point",
@@ -320,6 +324,8 @@ function importMasksDialog(project, onDone) {
           const fd = new FormData();
           for (const f of input.files) fd.append("files", f, f.name);
           fd.append("import_class", cls.value);
+          fd.append("source_tool", tool.value);
+          fd.append("remarks", remarks.value);
           try {
             const res = await api.form(`api/v1/projects/${project.id}/masks`, fd);
             clear(result).append(h("div", { class: `alert ${res.errors.length ? "alert-warn" : "alert-ok"}` },
