@@ -5,6 +5,15 @@ the running version is `src/online_annotator/_version.py`.
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-09-12
+
+### Fixed
+- Two races in the Playwright journey added for mask import made the suite fail intermittently
+  under CI load (the `v1.1.0` tag run failed on the Playwright step while the identical commit
+  passed on `main`): it asserted on the first toast when an earlier one could still be on
+  screen, and it read the class-coverage title once immediately after a synthetic stroke. Both
+  now match by text and poll. Test-only; no product code differs from 1.1.0.
+
 ## [1.1.0] — 2026-09-12
 
 ### Added

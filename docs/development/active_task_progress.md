@@ -220,9 +220,17 @@ would silently invalidate the published archive. Both fixes are test-only and ri
 release. If the tag must carry green CI, the clean route is a `v1.1.1` patch tag plus a suite
 bump, never a moved tag.
 
+## Release 1.1.1 (2026-09-12)
+
+Cut so the shipped tag carries a green CI run, which `v1.1.0` does not (see the note above).
+Product code is identical to 1.1.0; only the two Playwright fixes differ. Suite bumped to
+1.8.1 to take it. Full verification re-run before tagging: pytest 71, Playwright 7, node 8,
+ruff clean.
+
 ## Git state
 
-- OnlineAnnotator `main`: 1.1.0 at `7e10aa5` (CI green), tag `v1.1.0` at `092e994`, pushed.
+- OnlineAnnotator `main`: 1.1.1, tag `v1.1.1` (green); `v1.1.0` at `092e994` left in place
+  with its red Playwright run, because suite v1.8.0 pinned that commit and tags are immutable.
 - ml_server_deploy: `annotator` `ref` = `v1.1.0`, suite `v1.8.0` tagged; release build succeeded.
 - ml_server `main`: `2343fec`, CI green end to end (pre-commit, pytest 82, docker build).
 

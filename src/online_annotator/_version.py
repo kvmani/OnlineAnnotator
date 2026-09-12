@@ -4,6 +4,6 @@ The UI, the health endpoint, export manifests and the packaging metadata all rea
 these values; nothing else may type a version number by hand.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 TOOL_ID = "online-annotator"
 TOOL_NAME = "Online Annotator"
