@@ -197,10 +197,34 @@ frozen into a submitted version, restore returning manual provenance, remarks ed
 refusal on hand-drawn images, approved images never overwritten, lease held by someone else,
 the audit entry, bulk import provenance, and the export manifest.
 
+## Post-release note: the v1.1.0 tag's CI run (2026-09-12)
+
+The `v1.1.0` tag run failed while `main` passed on the identical commit `092e994` (the repo
+has one workflow, so both ran the same steps). Lint and `pytest` passed on both; only the
+Playwright step failed, so this was a harness flake in the journey added for mask import, not
+a product defect. Two one-shot races in that journey were found and fixed:
+
+- it asserted on `.toast` `.first()`, but an earlier toast ("Project created") can still be on
+  screen when the import toast appears (a screenshot of the flow shows both) -- 3afa4fd;
+- it read the class-coverage title once immediately after a synthetic stroke, before the event
+  is necessarily delivered and recomputed; it now polls -- 7e10aa5.
+
+Which assertion actually fired is **not** confirmed: downloading the job log returns
+`403 Must have admin rights to Repository` unauthenticated. The run's Playwright report
+artifact has it (7-day retention):
+https://github.com/kvmani/OnlineAnnotator/actions/runs/34674822566
+
+The tag was deliberately **not** moved: suite v1.8.0 already resolved `v1.1.0` to `092e994`,
+and the deploy contract is that a release pins exact immutable component commits, so retagging
+would silently invalidate the published archive. Both fixes are test-only and ride the next
+release. If the tag must carry green CI, the clean route is a `v1.1.1` patch tag plus a suite
+bump, never a moved tag.
+
 ## Git state
 
-- OnlineAnnotator `main`: 1.1.0, tag `v1.1.0`, pushed.
-- ml_server_deploy: `annotator` component `ref` bumped to `v1.1.0`, suite released.
+- OnlineAnnotator `main`: 1.1.0 at `7e10aa5` (CI green), tag `v1.1.0` at `092e994`, pushed.
+- ml_server_deploy: `annotator` `ref` = `v1.1.0`, suite `v1.8.0` tagged; release build succeeded.
+- ml_server `main`: `2343fec`, CI green end to end (pre-commit, pytest 82, docker build).
 
 ## Next action
 
