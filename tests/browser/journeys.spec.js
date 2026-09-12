@@ -268,8 +268,12 @@ test("an annotator imports an existing mask, corrects it and the source is recor
 
   // Correcting it by hand must not turn it back into hand-drawn work.
   await paintStroke(page, 30);
+  // Poll rather than read once: the stroke has to be delivered and the coverage
+  // recomputed, and a one-shot read can land before either has happened.
+  await expect
+    .poll(() => page.locator('[data-cov="1"]').getAttribute("title"), { timeout: 10_000 })
+    .not.toEqual(beforeCorrection);
   await expect(page.locator(".save-state")).toContainText("Saved", { timeout: 10_000 });
-  expect(await page.locator('[data-cov="1"]').getAttribute("title")).not.toEqual(beforeCorrection);
   await expect(page.locator(".ws-side")).toContainText("Imported mask, corrected here");
 
   // The remarks can be corrected afterwards.
