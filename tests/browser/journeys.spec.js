@@ -256,7 +256,9 @@ test("an annotator imports an existing mask, corrects it and the source is recor
   await dialog.locator("textarea").fill("Model run of 2026-09-10; misses faint tips.");
   await dialog.getByRole("button", { name: "Import", exact: true }).click();
 
-  await expect(page.locator(".toast").first()).toContainText("binary mask");
+  // Match the toast by its text, not by position: an earlier toast ("Project created")
+  // can still be on screen, and which one is first is a race.
+  await expect(page.locator(".toast", { hasText: "binary mask" })).toBeVisible();
   await expect(page.locator(".ws-side")).toContainText("Imported mask, corrected here");
   await expect(page.locator(".ws-side")).toContainText("HydrideSegmentation v2.3");
   await expect(page.locator(".ws-side")).toContainText("misses faint tips");
