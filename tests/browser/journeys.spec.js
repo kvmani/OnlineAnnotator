@@ -1,7 +1,8 @@
 // End-to-end user journeys in a real browser (run: npm run test:browser).
-// They replay, click for click, the manual acceptance tests: an annotator labels and
-// submits, a reviewer approves and exports, two people collide on one image, an
-// administrator sets up a project and uploads images, and a newcomer finds help.
+// They replay, click for click, the manual acceptance tests: a user labels and submits in
+// Annotate mode, another user approves and exports in Review mode, two people collide on one
+// image, an administrator sets up a project and uploads images, and a newcomer finds help.
+// The two-person annotate/review cycle in both directions is in modes.spec.js.
 import { expect, test } from "@playwright/test";
 
 const ALLOWED_CONSOLE = [/status of 401/, /status of 423/];
@@ -19,6 +20,13 @@ async function signIn(page, email) {
   await page.goto("/");
   await page.getByRole("button", { name: new RegExp(email) }).click();
   await expect(page.locator(".user-chip")).toBeVisible();
+}
+
+async function setMode(page, label) {
+  const radio = page.getByRole("radio", { name: label });
+  if ((await radio.getAttribute("aria-checked")) !== "true") await radio.click();
+  await expect(radio).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("body")).toHaveClass(new RegExp(`mode-${label.toLowerCase()}`));
 }
 
 async function openedImage(page) {
@@ -40,7 +48,7 @@ test("a newcomer can read the help centre before signing in", async ({ page }) =
   const problems = watchConsole(page);
   await page.goto("/#/help");
   await expect(page.getByRole("heading", { name: "Getting started" })).toBeVisible();
-  for (const section of ["Drawing tools", "Reviewing", "Exporting datasets", "Troubleshooting", "Keyboard shortcuts"]) {
+  for (const section of ["Annotate and Review modes", "Drawing tools", "Reviewing", "Exporting datasets", "Troubleshooting", "Keyboard shortcuts"]) {
     await page.locator(".help-nav").getByRole("link", { name: section }).click();
     await expect(page.locator(".help-content h1")).toHaveText(section);
   }
@@ -49,10 +57,12 @@ test("a newcomer can read the help centre before signing in", async ({ page }) =
   expect(problems).toEqual([]);
 });
 
-test("an annotator labels an image, sees it saved, and submits it", async ({ page }) => {
+test("a user in Annotate mode labels an image, sees it saved, and submits it", async ({ page }) => {
   const problems = watchConsole(page);
-  await signIn(page, "annotator@demo.local");
+  await signIn(page, "arun@demo.local");
+  await expect(page.getByRole("radio", { name: "Annotate" })).toHaveAttribute("aria-checked", "true");
   await expect(page.getByRole("heading", { name: "How it works" })).toBeVisible();
+  await expect(page.locator(".mode-note")).toContainText("Annotate mode");
   await page.locator(".project-card").getByRole("button", { name: "Annotate next" }).click();
   const first = await openedImage(page);
   await expect(page.locator(".ws-hint")).toContainText("Brush");
@@ -77,14 +87,16 @@ test("an annotator labels an image, sees it saved, and submits it", async ({ pag
   await expect(dialog).toContainText("Labelled area on this image");
   await dialog.locator("textarea").fill("Main platelet traced; faint tips uncertain.");
   await dialog.getByRole("button", { name: "Submit", exact: true }).click();
-  await expect(page.locator(".toast").first()).toContainText("Submitted for review");
+  await expect(page.locator(".toast", { hasText: "Submitted for review" })).toBeVisible();
   await expect.poll(() => page.url()).not.toBe(first);
   expect(problems).toEqual([]);
 });
 
-test("a reviewer corrects, approves and exports a HydrideSegmentation dataset", async ({ page }) => {
+test("another user switches to Review, corrects, approves and exports a HydrideSegmentation dataset", async ({ page }) => {
   const problems = watchConsole(page);
-  await signIn(page, "reviewer@demo.local");
+  await signIn(page, "riya@demo.local");
+  await setMode(page, "Review");
+  await expect(page.locator(".mode-note")).toContainText("1 submission from other people is waiting for your review");
   await page.locator(".project-card").getByRole("button", { name: "Review next" }).click();
   await openedImage(page);
   await expect(page.locator(".ws-banner")).toContainText("Main platelet traced");
@@ -114,18 +126,20 @@ test("a reviewer corrects, approves and exports a HydrideSegmentation dataset", 
 test("two people cannot edit the same image at once", async ({ browser }) => {
   const a = await (await browser.newContext()).newPage();
   const b = await (await browser.newContext()).newPage();
-  await signIn(a, "annotator@demo.local");
+  await signIn(a, "arun@demo.local");
+  await setMode(a, "Annotate");
   await a.locator(".project-card").getByRole("button", { name: "Annotate next" }).click();
   const url = await openedImage(a);
 
-  await signIn(b, "reviewer@demo.local");
+  await signIn(b, "riya@demo.local");
+  await setMode(b, "Annotate"); // Riya is still in Review mode from the previous journey
   await b.goto(url);
   await openedImage(b);
   await expect(b.locator(".ws-banner")).toContainText("is editing this image");
   await expect(b.locator(".save-state")).toHaveText("View only");
   await expect(b.getByRole("button", { name: "Brush" })).toBeDisabled();
 
-  // When the annotator leaves, the reviewer can take over.
+  // When the first person leaves, the second can take over.
   await a.locator(".ws-top").getByRole("link", { name: "Back to the project" }).click();
   await expect(a).toHaveURL(/#\/p\/1$/);
   await b.getByRole("button", { name: "Try again" }).click();
@@ -139,13 +153,16 @@ test("an administrator creates a project, adds a user and uploads images", async
   await expect(page.getByRole("link", { name: "All tools" })).toHaveAttribute("href", "http://127.0.0.1:5000/");
 
   await page.getByRole("link", { name: "Users" }).click();
+  await expect(page.locator("thead")).toContainText("Working mode");
   await page.getByRole("button", { name: "Add user" }).click();
   const add = page.getByRole("dialog", { name: "Add user" });
+  await expect(add).toContainText("Every user can annotate and review");
   await add.getByLabel("Office e-mail").fill("new.person@lab.example");
   await add.getByLabel("Full name").fill("New Person");
   await add.getByRole("button", { name: "Create account" }).click();
   await expect(page.getByRole("dialog", { name: "Temporary password" })).toContainText("new.person@lab.example");
   await page.getByRole("button", { name: "Done" }).click();
+  await expect(page.getByRole("checkbox", { name: "New Person is an administrator" })).not.toBeChecked();
 
   await page.goto("/#/");
   await page.getByRole("button", { name: "New project" }).click();
@@ -186,7 +203,7 @@ test("an administrator creates a project, adds a user and uploads images", async
 
 test("every button has an accessible name", async ({ page }) => {
   await signIn(page, "admin@demo.local");
-  for (const hash of ["#/", "#/p/1", "#/p/1/export", "#/users", "#/help"]) {
+  for (const hash of ["#/", "#/p/1", "#/p/1/export", "#/users", "#/help", "#/help/modes"]) {
     await page.goto(`/${hash}`);
     await page.waitForTimeout(600);
     const unnamed = await page.$$eval("button", (buttons) =>
@@ -195,9 +212,10 @@ test("every button has an accessible name", async ({ page }) => {
   }
 });
 
-test("an annotator imports an existing mask, corrects it and the source is recorded", async ({ page }) => {
+test("a user imports an existing mask, corrects it and the source is recorded", async ({ page }) => {
   const problems = watchConsole(page);
   await signIn(page, "admin@demo.local");
+  await setMode(page, "Annotate");
 
   // A project with one image of a size we control, so the mask can match it exactly.
   await page.goto("/#/");

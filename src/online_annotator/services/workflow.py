@@ -12,8 +12,10 @@ Rules enforced here (never only in the browser):
 
 * every change to a label map requires the caller to hold the image's lease;
 * a save must name the revision it was based on (no silent lost updates);
-* a submitted image can be edited only by a reviewer (or after withdrawal);
-* nobody approves their own submission unless ``allow_self_approval`` is set;
+* annotating (editing an image that is not waiting for review, importing, submitting) needs
+  Annotate mode; correcting and deciding on a submission needs Review mode (``access``);
+* nobody reviews -- corrects, approves or returns -- their own submission unless
+  ``allow_self_approval`` is set; the submitter withdraws it instead;
 * exports read the latest **approved** version, never the working copy.
 """
 
@@ -29,15 +31,12 @@ from sqlalchemy.orm import Session
 
 from ..config import Settings
 from ..models import Image, ImageLock, User, Version, as_utc, utcnow
+from . import access
 from . import labels as label_ops
 
 
-class WorkflowError(Exception):
+class WorkflowError(access.Refused):
     """A request that conflicts with the workflow; ``status`` is the HTTP code to use."""
-
-    def __init__(self, message: str, status: int = 409) -> None:
-        super().__init__(message)
-        self.status = status
 
 
 # --------------------------------------------------------------------------- storage paths
@@ -176,10 +175,27 @@ def _store_working(settings: Settings, image: Image, labels: np.ndarray, user: U
     # not make the ground truth hand-drawn, and provenance must survive ordinary editing.
 
 
+def check_can_edit(settings: Settings, image: Image, user: User) -> None:
+    """Refuse a label change that the user's working mode or the review rules do not allow.
+
+    An image waiting for review is changed only as a review correction, in Review mode, by
+    someone other than the submitter; every other image is edited in Annotate mode.
+    """
+    if image.status != "submitted":
+        access.require_mode(user, access.ANNOTATE, "edit this image")
+        return
+    pending = latest(image, "submitted")
+    if pending is not None and not access.may_review(settings, user, pending.created_by):
+        raise WorkflowError("You submitted this image, so someone else reviews it. To change it yourself, "
+                            "withdraw the submission in Annotate mode.", 403)
+    if user.active_mode != access.REVIEW:
+        raise WorkflowError("This image is waiting for review. Switch to Review mode at the top of the page to "
+                            "review and correct it.")
+
+
 def save_working(db: Session, settings: Settings, image: Image, user: User, labels: np.ndarray,
                  base_revision: int, origin: str = "edited in browser") -> None:
-    if image.status == "submitted" and not user.can_review:
-        raise WorkflowError("This image is waiting for review. Withdraw the submission to edit it again.")
+    check_can_edit(settings, image, user)
     require_lock(db, image, user)
     if base_revision != image.working_revision:
         raise WorkflowError(
@@ -198,11 +214,12 @@ def import_working(db: Session, settings: Settings, image: Image, user: User, la
                    source_remarks: str = "") -> None:
     """Replace the working copy with a mask produced outside this tool.
 
-    The annotator then corrects it instead of starting from scratch. The image is marked
+    The user then corrects it instead of starting from scratch. The image is marked
     ``mask_source = "imported"`` together with the tool that made the mask and the
-    annotator's remarks, so every later version and export can say the ground truth began
+    user's remarks, so every later version and export can say the ground truth began
     as an import rather than as hand-drawn work.
     """
+    access.require_mode(user, access.ANNOTATE, "import a mask")
     if image.status in ("submitted", "approved"):
         raise WorkflowError(f"{image.original_filename} is {image.status}; imports only replace work in progress.")
     state = lock_state(db, image, user)
@@ -270,6 +287,7 @@ def latest(image: Image, status: str) -> Version | None:
 
 
 def submit(db: Session, settings: Settings, image: Image, user: User, note: str = "") -> Version:
+    access.require_mode(user, access.ANNOTATE, "submit work for review")
     require_lock(db, image, user)
     if image.status == "submitted":
         raise WorkflowError("This image is already waiting for review.")
@@ -295,8 +313,10 @@ def withdraw(db: Session, image: Image, user: User) -> Version:
     version = latest(image, "submitted")
     if version is None:  # pragma: no cover - defensive
         raise WorkflowError("No pending submission was found.")
-    if version.created_by != user.email and not user.can_review:
-        raise WorkflowError("Only the person who submitted (or a reviewer) can withdraw it.", 403)
+    # Taking back your own work is allowed in either mode. Anyone else's needs an administrator:
+    # now that everyone can review, "any reviewer" would mean anyone at all.
+    if version.created_by != user.email and not user.is_admin:
+        raise WorkflowError("Only the person who submitted it (or an administrator) can withdraw it.", 403)
     version.status = "withdrawn"
     image.status = "in_progress"
     db.commit()
@@ -305,24 +325,27 @@ def withdraw(db: Session, image: Image, user: User) -> Version:
 
 def review(db: Session, settings: Settings, image: Image, reviewer: User, decision: str,
            comment: str = "") -> Version:
-    """Approve or request changes on the pending submission.
+    """Approve or request changes on the pending submission (Review mode, not your own work).
 
     If the reviewer corrected the working copy during review, approval snapshots the
     corrected labels as a new ``reviewer_edit`` version and approves that instead, so
     the approved record always matches exactly what the reviewer saw.
     """
-    if not reviewer.can_review:
-        raise WorkflowError("Only reviewers and administrators can review.", 403)
+    access.require_mode(reviewer, access.REVIEW, "approve or request changes")
     if image.status != "submitted":
         raise WorkflowError("There is no submission waiting for review on this image.")
     pending = latest(image, "submitted")
     if pending is None:  # pragma: no cover - defensive
         raise WorkflowError("No pending submission was found.")
+    if not access.may_review(settings, reviewer, pending.created_by):
+        raise WorkflowError("You submitted this annotation, so another person must review it. To change it "
+                            "yourself, withdraw it in Annotate mode (an administrator can allow self-approval "
+                            "in the configuration).", 403)
     comment = (comment or "").strip()
     now = utcnow()
     if decision == "request_changes":
         if not comment:
-            raise WorkflowError("Tell the annotator what to change: a comment is required.", 422)
+            raise WorkflowError("Tell the person who submitted it what to change: a comment is required.", 422)
         pending.status = "changes_requested"
         pending.reviewed_by, pending.reviewed_at, pending.review_comment = reviewer.email, now, comment
         image.status = "changes_requested"

@@ -190,8 +190,7 @@ def request_otp(db: Session, settings: Settings, email: str, mailer=None) -> str
     """Create a login code and e-mail it. Always returns a challenge id (no account enumeration).
 
     Codes are never returned to the browser. With ``self_registration`` enabled an
-    unknown address in an allowed domain gets a new *annotator* account on first
-    successful verification only.
+    unknown address in an allowed domain gets a new ordinary (non-administrator) account.
     """
     if not settings.otp_login_enabled:
         raise AuthError("One-time e-mail codes are not enabled on this server. Sign in with your password.")
@@ -204,7 +203,7 @@ def request_otp(db: Session, settings: Settings, email: str, mailer=None) -> str
         except AuthError:
             return challenge_id
         user = User(email=address, full_name=address.split("@")[0].replace(".", " ").title(),
-                    role="annotator", password_hash=hash_password(secrets.token_urlsafe(24)),
+                    is_admin=False, password_hash=hash_password(secrets.token_urlsafe(24)),
                     is_active=True)
         db.add(user)
         db.flush()

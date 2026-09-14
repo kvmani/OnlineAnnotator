@@ -14,7 +14,7 @@ max_upload_mb: 200         # per uploaded file
 max_image_megapixels: 80
 login_attempts_per_15min: 10
 
-allow_self_approval: false # true lets a reviewer approve their own submission (single-person teams)
+allow_self_approval: false # true lets people review (approve or return) their own submissions; one-person teams
 self_registration: false   # with e-mail enabled: unknown addresses may sign up by code as annotators
 allowed_email_domains: []  # e.g. ["lab.example"]; restricts new accounts
 cookie_secure: false       # true when served over HTTPS

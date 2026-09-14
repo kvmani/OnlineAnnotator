@@ -1,17 +1,18 @@
 // Project page: image gallery with filters, uploads, mask import, classes, exports, activity.
 import { api, uploadWithProgress } from "../api.js";
 import { go, setCrumbs } from "../nav.js";
-import { app, canReview, isAdmin } from "../state.js";
+import { app, inReview, isAdmin, mode } from "../state.js";
 import {
   STATUS_HELP, STATUS_LABELS, clear, confirmDialog, emptyState, field, fmtBytes, fmtDate, fmtPct, fmtRelative, h,
   helpTip, icon, modal, plural, statusBadge, toast,
 } from "../ui.js";
-import { startNext } from "./home.js";
+import { modeNote, startNext } from "./home.js";
 
+// Every tab is for every user, in either working mode, except the administrator's Settings.
 const TABS = [
   { id: "images", label: "Images" },
   { id: "classes", label: "Classes & guidelines" },
-  { id: "export", label: "Export dataset", reviewer: true },
+  { id: "export", label: "Export dataset" },
   { id: "activity", label: "Activity" },
   { id: "settings", label: "Settings", admin: true },
 ];
@@ -28,23 +29,26 @@ export async function renderProject(view, projectId, tab) {
   const body = h("div", { class: "tab-body" });
   page.append(header, tabBar, body);
 
+  // The header leads with the one action that matters in the current working mode.
   const renderHeader = () => {
     const c = project.counts;
+    const q = project.queue || { annotate: 0, review: 0, own_pending: 0 };
+    const primary = inReview()
+      ? h("button", { class: "btn btn-primary", type: "button", disabled: !q.review, onclick: () => startNext(project.id, "review"),
+        title: q.review ? "Open the oldest submission from someone else" : "Nothing from other people is waiting for review" },
+      icon("review"), `Review next${q.review ? ` (${q.review})` : ""}`)
+      : (c.total ? h("button", { class: "btn btn-primary", type: "button", onclick: () => startNext(project.id, "annotate"),
+        title: "Open the next image that needs work and is not being edited by someone else" }, icon("play"), "Annotate next") : null);
     clear(header).append(h("div", { class: "page-head" },
       h("div", {}, h("h1", {}, project.name), project.description ? h("p", { class: "muted" }, project.description) : null),
-      h("div", { class: "head-actions" },
-        c.total ? h("button", { class: "btn btn-primary", type: "button", onclick: () => startNext(project.id, "annotate"),
-          title: "Open the next image that needs work and is not being edited by someone else" }, icon("play"), "Annotate next") : null,
-        canReview() && c.total ? h("button", { class: "btn", type: "button", disabled: !c.submitted, onclick: () => startNext(project.id, "review"),
-          title: c.submitted ? "Open the oldest submission waiting for review" : "Nothing waiting for review" },
-        icon("review"), `Review next${c.submitted ? ` (${c.submitted})` : ""}`) : null)),
+      h("div", { class: "head-actions" }, primary)),
+    c.total ? modeNote(q.review, q.own_pending) : null,
     statusSummary(c));
   };
 
   const renderTabs = () => {
     clear(tabBar);
     for (const t of TABS) {
-      if (t.reviewer && !canReview()) continue;
       if (t.admin && !isAdmin()) continue;
       tabBar.append(h("a", { href: `#/p/${project.id}/${t.id}`, class: `tab ${t.id === tab ? "active" : ""}`, role: "tab",
         "aria-selected": t.id === tab ? "true" : "false" }, t.label));
@@ -60,7 +64,7 @@ export async function renderProject(view, projectId, tab) {
   renderTabs();
   if (tab === "images") timer = await imagesTab(body, project, reload);
   else if (tab === "classes") classesTab(body, project, reload);
-  else if (tab === "export" && canReview()) await exportTab(body, project);
+  else if (tab === "export") await exportTab(body, project);
   else if (tab === "activity") await activityTab(body, project);
   else if (tab === "settings" && isAdmin()) settingsTab(body, project, reload);
   else go(`#/p/${project.id}`);
@@ -74,15 +78,17 @@ function statusSummary(c) {
     ["new", "in_progress", "submitted", "changes_requested", "approved"].map(chip),
     helpTip(h("div", {}, h("p", {}, "Every image moves through these stages:"),
       h("ol", { class: "compact" }, h("li", {}, "New: not started."), h("li", {}, "In progress: saved work, not submitted."),
-        h("li", {}, "Waiting for review: submitted by the annotator."),
-        h("li", {}, "Changes requested: returned by a reviewer with a comment."),
+        h("li", {}, "Waiting for review: submitted, for someone else to review in Review mode."),
+        h("li", {}, "Changes requested: returned with a comment by the person who reviewed it."),
         h("li", {}, "Approved: accepted as ground truth. Only approved images are exported by default."))), { wide: true }));
 }
 
 // -------------------------------------------------------------------------------- images
 async function imagesTab(body, project, reloadProject) {
   let images = [];
-  let filter = sessionStorage.getItem(`oa.filter.${project.id}`) || "all";
+  // The filter is remembered per working mode; Review mode starts on what waits for me.
+  const filterKey = `oa.filter.${project.id}.${mode()}`;
+  let filter = sessionStorage.getItem(filterKey) || (inReview() ? "for_review" : "all");
   let query = "";
   const selected = new Set();
   const toolbar = h("div", { class: "toolbar" });
@@ -92,7 +98,9 @@ async function imagesTab(body, project, reloadProject) {
 
   const upload = h("button", { class: "btn", type: "button" }, icon("upload"), "Upload images");
   upload.addEventListener("click", () => uploadDialog(project, refresh));
-  const importBtn = h("button", { class: "btn", type: "button", title: "Load existing masks (e.g. model predictions) as a starting point" }, icon("download"), "Import masks");
+  const importBtn = h("button", { class: "btn", type: "button", disabled: inReview(),
+    title: inReview() ? "Importing masks is annotation work: switch to Annotate mode" : "Load existing masks (e.g. model predictions) as a starting point" },
+  icon("download"), "Import masks");
   importBtn.addEventListener("click", () => importMasksDialog(project, refresh));
   const search = h("input", { type: "search", placeholder: "Search file names", class: "search" });
   search.addEventListener("input", () => {
@@ -107,22 +115,26 @@ async function imagesTab(body, project, reloadProject) {
     const counts = { all: images.length };
     for (const img of images) counts[img.status] = (counts[img.status] || 0) + 1;
     const mine = images.filter((i) => i.assigned_to === app.me.email).length;
+    const forReview = images.filter(isForMyReview).length;
     clear(filters);
     const opts = [["all", "All"], ["new", STATUS_LABELS.new], ["in_progress", STATUS_LABELS.in_progress],
       ["submitted", STATUS_LABELS.submitted], ["changes_requested", STATUS_LABELS.changes_requested], ["approved", STATUS_LABELS.approved]];
     if (mine) opts.push(["mine", "Assigned to me"]);
+    if (inReview()) opts.splice(1, 0, ["for_review", "For me to review"]);
     for (const [key, label] of opts) {
-      const n = key === "mine" ? mine : counts[key] || 0;
+      const n = key === "mine" ? mine : key === "for_review" ? forReview : counts[key] || 0;
       if (key !== "all" && key !== filter && !n) continue;
       const b = h("button", { class: `chip ${filter === key ? "active" : ""}`, type: "button" }, label, h("span", { class: "chip-n" }, n));
       b.addEventListener("click", () => {
         filter = key;
-        sessionStorage.setItem(`oa.filter.${project.id}`, key);
+        sessionStorage.setItem(filterKey, key);
         draw();
       });
       filters.append(b);
     }
-    const shown = images.filter((i) => (filter === "all" || (filter === "mine" ? i.assigned_to === app.me.email : i.status === filter)) &&
+    const matches = (i) => filter === "all" || (filter === "mine" ? i.assigned_to === app.me.email
+      : filter === "for_review" ? isForMyReview(i) : i.status === filter);
+    const shown = images.filter((i) => matches(i) &&
       (!query || i.original_filename.toLowerCase().includes(query) || i.stem.toLowerCase().includes(query)));
     clear(grid);
     if (!images.length) {
@@ -131,13 +143,15 @@ async function imagesTab(body, project, reloadProject) {
         h("button", { class: "btn btn-primary", type: "button", onclick: () => uploadDialog(project, refresh) }, icon("upload"), "Upload images")));
       return;
     }
-    if (!shown.length) grid.append(h("p", { class: "muted" }, "No images match this filter."));
+    if (!shown.length) {
+      grid.append(h("p", { class: "muted" }, filter === "for_review"
+        ? "Nothing from other people is waiting for your review in this project." : "No images match this filter."));
+    }
     for (const img of shown) grid.append(imageCard(project, img, selected, drawBulk));
     drawBulk();
   };
 
   const drawBulk = () => {
-    if (!canReview()) return;
     bulkBar.hidden = selected.size === 0;
     if (!selected.size) return;
     const split = h("select", {}, h("option", { value: "" }, "Set split…"), ["train", "val", "test", "unassigned"].map((s) => h("option", { value: s }, s)));
@@ -149,7 +163,7 @@ async function imagesTab(body, project, reloadProject) {
       refresh();
     });
     const assign = h("select", {}, h("option", { value: "" }, "Assign to…"), h("option", { value: "-" }, "Nobody"));
-    api.get("api/v1/users").then(({ users }) => users.filter((u) => u.is_active).forEach((u) => assign.append(h("option", { value: u.email }, `${u.full_name} (${u.role})`))));
+    api.get("api/v1/users").then(({ users }) => users.filter((u) => u.is_active).forEach((u) => assign.append(h("option", { value: u.email }, u.full_name))));
     assign.addEventListener("change", async () => {
       if (!assign.value) return;
       await api.post(`api/v1/projects/${project.id}/images/bulk`, { image_ids: [...selected], assigned_to: assign.value === "-" ? "" : assign.value });
@@ -175,10 +189,17 @@ async function imagesTab(body, project, reloadProject) {
     try {
       images = (await api.get(`api/v1/projects/${project.id}/images`)).images;
       draw();
+      await reloadProject(); // header counts: "Review next (n)" follows other people's submissions
     } catch (_) {
       /* transient */
     }
   }, 20000);
+}
+
+// Waiting for review, and submitted by someone else (or self-approval is allowed).
+function isForMyReview(img) {
+  const v = img.latest_version;
+  return img.status === "submitted" && Boolean(v) && (v.created_by !== app.me.email || Boolean(app.meta.allow_self_approval));
 }
 
 function imageCard(project, img, selected, onSelect) {
@@ -195,11 +216,13 @@ function imageCard(project, img, selected, onSelect) {
       h("div", { class: "image-card-title", title: img.original_filename }, img.stem),
       h("div", { class: "image-card-meta" }, statusBadge(img.status),
         img.split !== "unassigned" ? h("span", { class: "tag", title: "Dataset split" }, img.split) : null,
-        img.assigned_to ? h("span", { class: "tag", title: `Assigned to ${img.assigned_to}` }, "@", img.assigned_to.split("@")[0]) : null),
+        img.assigned_to ? h("span", { class: "tag", title: `Assigned to ${img.assigned_to}` }, "@", img.assigned_to.split("@")[0]) : null,
+        img.status === "submitted" && img.latest_version && img.latest_version.created_by === app.me.email
+          ? h("span", { class: "tag", title: "You submitted this, so someone else reviews it" }, "yours") : null),
       note,
       h("div", { class: "image-card-foot muted small" },
         img.working_updated_by ? `${img.working_updated_by.split("@")[0]} · ${fmtRelative(img.working_updated_at)}` : `${img.width} × ${img.height}`)));
-  if (canReview()) {
+  if (onSelect) {
     const cb = h("input", { type: "checkbox", class: "select-box", "aria-label": `Select ${img.stem}` });
     cb.checked = selected.has(img.id);
     cb.addEventListener("change", () => {
@@ -246,7 +269,7 @@ function uploadDialog(project, onDone) {
     add(e.dataTransfer.files);
   });
   const body = h("div", { class: "stack" }, drop, input, list,
-    canReview() ? field("Dataset split for these images", split, "Which export folder these images belong to: train (model learns from them), val (tunes training), test (final unbiased check). Leave 'Decide later' if unsure; you can change it any time or let the export split automatically.") : null,
+    field("Dataset split for these images", split, "Which export folder these images belong to: train (model learns from them), val (tunes training), test (final unbiased check). Leave 'Decide later' if unsure; you can change it any time or let the export split automatically."),
     h("p", { class: "muted small" }, "Identical files are recognised and skipped. The original file is kept unchanged; 16-bit and TIFF images get a display copy, and the conversion is recorded."),
     progress, result);
   modal({
@@ -297,7 +320,7 @@ function importMasksDialog(project, onDone) {
   const remarks = h("textarea", { rows: "3", maxlength: "4000", placeholder: "e.g. Model run of 2026-09-10; tends to miss faint hydride tips near grain boundaries." });
   const result = h("div");
   const body = h("div", { class: "stack" },
-    h("p", {}, "Use this to start from existing masks, for example predictions from a HydrideSegmentation model. Annotators then only correct the mistakes."),
+    h("p", {}, "Use this to start from existing masks, for example predictions from a HydrideSegmentation model. People then only correct the mistakes."),
     h("ul", { class: "compact small" },
       h("li", {}, "Name each mask after its image: ", h("code", {}, "sample_07_mask.png"), " or ", h("code", {}, "sample_07.png"), " matches the image ", h("code", {}, "sample_07"), "."),
       h("li", {}, "Accepted: black/white (0/255), class numbers (indexed), the project's class colours, or red-on-black masks."),
@@ -391,7 +414,7 @@ function classDialog(project, cls, onDone) {
   modal({
     title: cls ? `Edit class ${cls.index}` : "Add class",
     body: h("div", { class: "stack" }, field("Name", name), field("Colour", color, "Only the on-screen and 'colour' mask colour. Changing it never changes the stored labels."),
-      field("What to label", desc, "Shown to annotators in the class list. Say what belongs to this class and what does not.")),
+      field("What to label", desc, "Shown in the class list while people annotate and review. Say what belongs to this class and what does not.")),
     actions: [{ label: "Cancel" }, {
       label: cls ? "Save" : "Add class",
       kind: "primary",
@@ -463,7 +486,7 @@ async function exportTab(body, project) {
 
   const form = h("div", { class: "export-form" },
     h("section", { class: "card" }, h("h3", {}, "1. Which annotations"),
-      radio("include", "approved", "Approved only (recommended)", "Ground truth checked by a reviewer."),
+      radio("include", "approved", "Approved only (recommended)", "Ground truth checked in review by a second person."),
       radio("include", "approved_and_submitted", "Approved and waiting for review", "For quick experiments only: unreviewed masks may contain mistakes.")),
     h("section", { class: "card" }, h("h3", {}, "2. Folder layout ", helpTip(layoutHelp(), { wide: true })),
       radio("layout", "hydride_pairs", "HydrideSegmentation pairs (recommended)", "One folder of image.png + image_mask.png pairs; point HydrideSegmentation's prepare_dataset at it."),
@@ -605,7 +628,7 @@ function settingsTab(body, project, reload) {
   const archive = h("button", { class: "btn", type: "button" }, project.archived ? "Restore project" : "Archive project");
   archive.addEventListener("click", async () => {
     const ok = await confirmDialog(project.archived ? "Restore project" : "Archive project",
-      project.archived ? "Show this project in the main list again?" : "Archived projects are hidden from annotators but keep all images, annotations and exports. You can restore it later.");
+      project.archived ? "Show this project in the main list again?" : "Archived projects are hidden from everyone except administrators but keep all images, annotations and exports. You can restore it later.");
     if (!ok) return;
     await api.patch(`api/v1/projects/${project.id}`, { archived: !project.archived });
     toast("Done.", "success");

@@ -1,4 +1,8 @@
-"""Shared request dependencies: settings, current user and role guards."""
+"""Shared request dependencies: settings, current user and the administrator guard.
+
+There is no reviewer guard: every active user may review. Whether they may do so *now* depends
+on their working mode, which the services check (``services/access.py``).
+"""
 
 from __future__ import annotations
 
@@ -41,15 +45,10 @@ def active_user(user: User = Depends(current_user)) -> User:
     return user
 
 
-def reviewer(user: User = Depends(active_user)) -> User:
-    if not user.can_review:
-        raise HTTPException(403, "This action needs the reviewer or administrator role.")
-    return user
-
-
 def admin(user: User = Depends(active_user)) -> User:
+    """Administrator privilege; independent of the working mode."""
     if not user.is_admin:
-        raise HTTPException(403, "This action needs the administrator role.")
+        raise HTTPException(403, "This action needs an administrator.")
     return user
 
 

@@ -209,8 +209,8 @@ export const STATUS_LABELS = {
 export const STATUS_HELP = {
   new: "Nobody has annotated this image yet.",
   in_progress: "Someone has saved work on this image but not submitted it.",
-  submitted: "Submitted by an annotator; a reviewer must approve it or ask for changes.",
-  changes_requested: "A reviewer returned it with comments. Fix and submit again.",
+  submitted: "Submitted for review. Another person, working in Review mode, approves it or asks for changes.",
+  changes_requested: "Returned with a comment by the person who reviewed it. Fix it in Annotate mode and submit again.",
   approved: "Checked and approved. Only approved annotations are exported as ground truth.",
 };
 

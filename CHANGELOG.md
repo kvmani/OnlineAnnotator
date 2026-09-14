@@ -5,6 +5,56 @@ the running version is `src/online_annotator/_version.py`.
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-09-14
+
+Every user can annotate **and** review. There are no annotator or reviewer accounts any more.
+
+### Changed (breaking)
+- **Working modes replace roles.** `users.role` (`annotator` | `reviewer` | `admin`) is replaced by
+  an `is_admin` privilege and a per-account `active_mode` (`annotate` | `review`) that each person
+  switches from an **Annotate / Review** control in the top bar. The mode is stored on the server
+  and enforced there: annotating (editing an image that is not waiting for review, importing
+  masks, submitting) needs Annotate mode; correcting, approving and returning a submission needs
+  Review mode. Administrator rights never depend on the mode.
+- API: user objects carry `is_admin` and `active_mode` instead of `role`; `POST /users` and
+  `PATCH /users/{id}` take `is_admin`; new `PUT /api/v1/auth/mode`; `GET /projects/{id}/next`
+  defaults `mode` to the caller's working mode; project responses add the caller's `queue`
+  counts (`annotate`, `review`, `own_pending`). A refusal because of the mode is `409` and names
+  the mode to switch to.
+- CLI: `create-user --role …` is replaced by `create-user [--admin]`.
+- Splits, assignments and exports, formerly reviewer-only, are open to every user in either mode.
+- Withdrawing someone else's submission now needs an administrator (formerly any reviewer).
+- Nobody reviews their own submission (approve, request changes or correct it) unless
+  `allow_self_approval` is set, and their own submissions are left out of **Review next** and the
+  review counts. Previously only approval was blocked and own submissions were queued last.
+- Demo accounts are two ordinary users, `arun@demo.local` and `riya@demo.local`, plus
+  `admin@demo.local`.
+
+### Added
+- Mode-led screens: the dashboard and project page lead with **Annotate next** or
+  **Review next (n)** and a note of what waits in the current mode, with a button to the other
+  mode when that is where the work is; the gallery gains a **For me to review** filter and a
+  **yours** tag; workspace banners explain own submissions and images that are not waiting for
+  review, with a one-click mode switch. Switching mode saves and releases an open image and
+  redraws the same page; another tab follows the change when it is looked at again.
+- Users page: an Administrator checkbox and each person's current working mode.
+- Help centre section **Annotate and Review modes**; help, inline tips and messages no longer
+  describe people as annotators or reviewers.
+- **Database migrations**: schema version 3 and a numbered, idempotent migration registry
+  (`db.MIGRATIONS`). An older database is copied to `<data>/backups/` and then upgraded step by
+  step at start-up; `online-annotator db-status` and `online-annotator migrate` for operators.
+  Migration 3 keeps former administrators as administrators and starts former reviewers in
+  Review mode. Tests upgrade real databases written by v1.0.1 and v1.1.1.
+- Tests for privilege, working modes, own-submission protection and both directions of the
+  two-person cycle (`tests/test_modes.py`), and Playwright journeys in which two users alternately
+  annotate and review each other's work, including return and resubmission, the remembered mode
+  and switching mode with unsaved work (`tests/browser/modes.spec.js`).
+
+### Upgrade notes
+- The upgrade is automatic at the first start. Release 1.x refuses to start on a schema-3
+  database; to roll back, restore the copy the upgrade saved in `<data>/backups/`.
+- Needs SQLite 3.35 or newer (Ubuntu 22.04 and later ship it).
+
 ## [1.1.1] — 2026-09-12
 
 ### Fixed

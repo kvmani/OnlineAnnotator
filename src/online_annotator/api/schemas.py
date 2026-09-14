@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+WorkingMode = Literal["annotate", "review"]
+
 
 class LoginBody(BaseModel):
     email: str
@@ -26,16 +28,22 @@ class ChangePasswordBody(BaseModel):
     new_password: str
 
 
+class ModeBody(BaseModel):
+    """The signed-in user's working mode."""
+
+    mode: WorkingMode
+
+
 class UserCreateBody(BaseModel):
     email: str
     full_name: str = Field(min_length=1, max_length=255)
-    role: Literal["annotator", "reviewer", "admin"] = "annotator"
+    is_admin: bool = False
     password: str | None = None
 
 
 class UserUpdateBody(BaseModel):
     full_name: str | None = Field(default=None, min_length=1, max_length=255)
-    role: Literal["annotator", "reviewer", "admin"] | None = None
+    is_admin: bool | None = None
     is_active: bool | None = None
 
 
@@ -79,7 +87,7 @@ class BulkImageUpdateBody(BaseModel):
 
 
 class MaskRemarksBody(BaseModel):
-    """Notes about an imported mask: which tool made it and anything the annotator wants recorded."""
+    """Notes about an imported mask: which tool made it and anything the user wants recorded."""
 
     source_tool: str | None = Field(default=None, max_length=200)
     remarks: str | None = Field(default=None, max_length=4000)

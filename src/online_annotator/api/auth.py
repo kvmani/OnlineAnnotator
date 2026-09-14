@@ -1,4 +1,4 @@
-"""Sign-in, sign-out, password change, one-time e-mail codes and user administration."""
+"""Sign-in, sign-out, password change, working mode, one-time e-mail codes and user administration."""
 
 from __future__ import annotations
 
@@ -8,13 +8,14 @@ from sqlalchemy.orm import Session
 from ..config import Settings
 from ..db import get_db
 from ..models import User
-from ..services import audit
+from ..services import access, audit
 from ..services import auth as auth_ops
 from . import serialize
-from .deps import SESSION_COOKIE, admin, current_user, get_settings, session_token
+from .deps import SESSION_COOKIE, active_user, admin, current_user, get_settings, session_token
 from .schemas import (
     ChangePasswordBody,
     LoginBody,
+    ModeBody,
     OtpRequestBody,
     OtpVerifyBody,
     UserCreateBody,
@@ -94,6 +95,16 @@ def me(user: User = Depends(current_user)) -> dict:
     return {"user": serialize.user(user)}
 
 
+@router.put("/auth/mode")
+def set_mode(body: ModeBody, user: User = Depends(active_user), db: Session = Depends(get_db)) -> dict:
+    """Switch between Annotate and Review. Kept per account, so it follows the user between desks."""
+    try:
+        access.set_mode(db, user, body.mode)
+    except access.Refused as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
+    return {"user": serialize.user(user)}
+
+
 @router.post("/auth/change-password")
 def change_password(body: ChangePasswordBody, request: Request, response: Response,
                     user: User = Depends(current_user), db: Session = Depends(get_db),
@@ -133,11 +144,12 @@ def create_user(body: UserCreateBody, db: Session = Depends(get_db), actor: User
     if db.query(User).filter(User.email == email).first():
         raise HTTPException(409, f"{email} already has an account.")
     password = body.password or auth_ops.generate_temporary_password()
-    user = User(email=email, full_name=body.full_name.strip(), role=body.role,
+    user = User(email=email, full_name=body.full_name.strip(), is_admin=body.is_admin,
                 password_hash=auth_ops.hash_password(password), must_change_password=True)
     db.add(user)
     db.commit()
-    audit.record(db, settings.audit_file, actor.email, "user_created", f"Created {body.role} account {email}.")
+    kind = "administrator account" if body.is_admin else "account"
+    audit.record(db, settings.audit_file, actor.email, "user_created", f"Created {kind} {email}.")
     return {"user": serialize.user(user), "temporary_password": password}
 
 
@@ -147,7 +159,7 @@ def update_user(user_id: int, body: UserUpdateBody, db: Session = Depends(get_db
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(404, "User not found.")
-    if user.id == actor.id and (body.role not in (None, "admin") or body.is_active is False):
+    if user.id == actor.id and (body.is_admin is False or body.is_active is False):
         raise HTTPException(400, "You cannot remove your own administrator access. Ask another administrator.")
     changes = body.model_dump(exclude_none=True)
     for key, value in changes.items():

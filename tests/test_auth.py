@@ -11,16 +11,16 @@ from .conftest import HEADERS, make_client
 
 def test_login_and_me(admin):
     me = admin.get("/api/v1/auth/me").json()["user"]
-    assert me["email"] == "admin@lab.test" and me["role"] == "admin"
+    assert me["email"] == "admin@lab.test" and me["is_admin"] is True and me["active_mode"] == "annotate"
 
 
 def test_wrong_password_is_generic_and_rate_limited(app):
     client = TestClient(app, headers=HEADERS)
     for _ in range(10):
-        r = client.post("/api/v1/auth/login", json={"email": "ann@lab.test", "password": "nope-nope-1"})
+        r = client.post("/api/v1/auth/login", json={"email": "alice@lab.test", "password": "nope-nope-1"})
         assert r.status_code == 401
         assert "not correct" in r.json()["detail"]
-    r = client.post("/api/v1/auth/login", json={"email": "ann@lab.test", "password": "annot-pass-1"})
+    r = client.post("/api/v1/auth/login", json={"email": "alice@lab.test", "password": "alice-pass-1"})
     assert r.status_code == 401 and "Too many" in r.json()["detail"]
 
 
@@ -72,6 +72,20 @@ def test_otp_flow_with_mail_server(tmp_path, monkeypatch):
         assert r.status_code == 200 and not sent
 
 
+def test_self_registration_creates_an_ordinary_account(tmp_path, monkeypatch):
+    sent = {}
+    settings = load_settings(environ={}, data_dir=tmp_path / "d", secret_key="k", self_registration=True,
+                             allowed_email_domains=["lab.test"], email={"enabled": True, "smtp_host": "mail.lab.test"})
+    application = create_app(settings, admin_email="boss@lab.test", admin_password="boss-pass-1")
+    monkeypatch.setattr(auth_ops, "send_mail", lambda s, to, subj, body: sent.update(body=body))
+    with TestClient(application, headers=HEADERS) as client:
+        r = client.post("/api/v1/auth/otp/request", json={"email": "first.timer@lab.test"})
+        code = sent["body"].split("code is ")[1][:6]
+        user = client.post("/api/v1/auth/otp/verify", json={"challenge_id": r.json()["challenge_id"],
+                                                             "code": code}).json()["user"]
+        assert user["is_admin"] is False and user["active_mode"] == "annotate"
+
+
 def test_bootstrap_generates_one_time_password(tmp_path):
     settings = load_settings(environ={}, data_dir=tmp_path / "d", secret_key="k")
     application = create_app(settings)
@@ -81,6 +95,7 @@ def test_bootstrap_generates_one_time_password(tmp_path):
         password = note.split("password:")[1].split()[0]
         r = client.post("/api/v1/auth/login", json={"email": email, "password": password})
         assert r.json()["user"]["must_change_password"] is True
+        assert r.json()["user"]["is_admin"] is True
         assert client.get("/api/v1/projects").status_code == 403
         r = client.post("/api/v1/auth/change-password", json={"current_password": password,
                                                              "new_password": "a-better-pass-9"})
@@ -95,32 +110,41 @@ def test_weak_password_rejected(admin):
 
 
 def test_admin_creates_user_with_temporary_password(app, admin):
-    r = admin.post("/api/v1/users", json={"email": "New.Person@Lab.test", "full_name": "New Person",
-                                          "role": "annotator"})
+    r = admin.post("/api/v1/users", json={"email": "New.Person@Lab.test", "full_name": "New Person"})
     assert r.status_code == 200
     temp = r.json()["temporary_password"]
     assert r.json()["user"]["email"] == "new.person@lab.test"
+    assert r.json()["user"]["is_admin"] is False and r.json()["user"]["active_mode"] == "annotate"
     client = TestClient(app, headers=HEADERS)
     login = client.post("/api/v1/auth/login", json={"email": "new.person@lab.test", "password": temp})
     assert login.json()["user"]["must_change_password"] is True
     assert admin.post("/api/v1/users", json={"email": "new.person@lab.test", "full_name": "X"}).status_code == 409
+    lead = admin.post("/api/v1/users", json={"email": "lead@lab.test", "full_name": "Lead", "is_admin": True})
+    assert lead.json()["user"]["is_admin"] is True
 
 
-def test_non_admin_cannot_manage_users(ann):
-    assert ann.post("/api/v1/users", json={"email": "x@lab.test", "full_name": "X"}).status_code == 403
+def test_old_role_field_is_not_accepted_as_a_privilege(admin):
+    r = admin.post("/api/v1/users", json={"email": "sneaky@lab.test", "full_name": "S", "role": "admin"})
+    assert r.status_code == 200 and r.json()["user"]["is_admin"] is False
+
+
+def test_non_admin_cannot_manage_users(alice):
+    assert alice.post("/api/v1/users", json={"email": "x@lab.test", "full_name": "X"}).status_code == 403
+    assert alice.patch("/api/v1/users/1", json={"is_admin": True}).status_code == 403
 
 
 def test_admin_cannot_demote_self(admin):
     me = admin.get("/api/v1/auth/me").json()["user"]
-    assert admin.patch(f"/api/v1/users/{me['id']}", json={"role": "annotator"}).status_code == 400
+    assert admin.patch(f"/api/v1/users/{me['id']}", json={"is_admin": False}).status_code == 400
+    assert admin.patch(f"/api/v1/users/{me['id']}", json={"is_active": False}).status_code == 400
 
 
 def test_disabled_user_loses_session(app, admin):
-    ann = make_client(app, "ann@lab.test")
+    alice = make_client(app, "alice@lab.test")
     users = admin.get("/api/v1/users").json()["users"]
-    ann_id = next(u["id"] for u in users if u["email"] == "ann@lab.test")
-    assert admin.patch(f"/api/v1/users/{ann_id}", json={"is_active": False}).status_code == 200
-    assert ann.get("/api/v1/projects").status_code == 401
+    alice_id = next(u["id"] for u in users if u["email"] == "alice@lab.test")
+    assert admin.patch(f"/api/v1/users/{alice_id}", json={"is_active": False}).status_code == 200
+    assert alice.get("/api/v1/projects").status_code == 401
 
 
 def test_logout(admin):

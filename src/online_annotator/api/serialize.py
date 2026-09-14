@@ -8,6 +8,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ..config import Settings
 from ..models import Export, Image, LabelClass, Project, User, Version, as_utc
 from ..services import projects as project_ops
 from ..services import workflow
@@ -19,7 +20,8 @@ def iso(value) -> str | None:
 
 
 def user(u: User) -> dict[str, Any]:
-    return {"id": u.id, "email": u.email, "full_name": u.full_name, "role": u.role, "is_active": u.is_active,
+    return {"id": u.id, "email": u.email, "full_name": u.full_name, "is_admin": u.is_admin,
+            "active_mode": u.active_mode, "is_active": u.is_active,
             "must_change_password": u.must_change_password, "created_at": iso(u.created_at),
             "last_login_at": iso(u.last_login_at)}
 
@@ -28,10 +30,13 @@ def label_class(c: LabelClass) -> dict[str, Any]:
     return {"id": c.id, "index": c.index, "name": c.name, "color": c.color, "description": c.description}
 
 
-def project(p: Project, detail: bool = False) -> dict[str, Any]:
+def project(p: Project, detail: bool = False, viewer: User | None = None,
+            settings: Settings | None = None) -> dict[str, Any]:
     out = {"id": p.id, "name": p.name, "description": p.description, "archived": p.archived,
            "created_by": p.created_by, "created_at": iso(p.created_at),
            "counts": project_ops.status_counts(p), "classes": [label_class(c) for c in p.classes]}
+    if viewer is not None and settings is not None:
+        out["queue"] = project_ops.queue_counts(settings, p, viewer)
     if detail:
         out["guidelines"] = p.guidelines
     return out

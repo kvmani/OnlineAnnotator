@@ -68,10 +68,11 @@ def cmd_create_user(args: argparse.Namespace) -> int:
         except AuthError as exc:
             print(exc, file=sys.stderr)
             return 2
-        db.add(User(email=email, full_name=args.name or email.split("@")[0], role=args.role,
+        db.add(User(email=email, full_name=args.name or email.split("@")[0], is_admin=args.admin,
                     password_hash=hash_password(password)))
         db.commit()
-    print(f"Created {args.role} {email}.")
+    kind = "administrator" if args.admin else "user (can annotate and review)"
+    print(f"Created {kind} {email}.")
     return 0
 
 
@@ -102,8 +103,62 @@ def cmd_seed_demo(args: argparse.Namespace) -> int:
     with _session(settings) as db:
         project = seed_demo(db, settings)
     print(f"Demo project ready: {project.name}")
-    for email, _name, role, password in DEMO_USERS:
-        print(f"  {role:<10} {email:<24} {password}")
+    for email, _name, is_admin, password in DEMO_USERS:
+        print(f"  {'admin' if is_admin else 'user':<6} {email:<24} {password}")
+    return 0
+
+
+def cmd_db_status(args: argparse.Namespace) -> int:
+    """Exit 0: up to date (or no database yet); 1: an upgrade will run; 2: database is newer."""
+    from .db import SCHEMA_VERSION, make_engine, schema_status
+
+    settings = _settings(args)
+    if settings.resolved_database_url.startswith("sqlite:///"):
+        folder = settings.data_dir
+        if not folder.exists():
+            print(f"No database yet in {folder}; the first start creates schema {SCHEMA_VERSION}.")
+            return 0
+    engine = make_engine(settings.resolved_database_url)
+    try:
+        status = schema_status(engine)
+    finally:
+        engine.dispose()
+    print(f"Release {__version__} writes database schema {SCHEMA_VERSION}.")
+    if status.stored is None:
+        print("No database yet; the first start creates it.")
+        return 0
+    print(f"Stored schema: {status.stored}.")
+    if status.newer_than_release:
+        print("The database is newer than this release: start the release that wrote it, or restore a backup.")
+        return 2
+    if status.pending:
+        print("Pending upgrade (a backup is saved to <data>/backups/ first):")
+        for step in status.pending:
+            print(f"  {step.version}: {step.description}")
+        return 1
+    print("Up to date.")
+    return 0
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    from .db import SCHEMA_VERSION, init_schema, make_engine
+
+    settings = _settings(args)
+    settings.prepare_storage()
+    engine = make_engine(settings.resolved_database_url)
+    try:
+        result = init_schema(engine)
+    except RuntimeError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    finally:
+        engine.dispose()
+    if result.applied:
+        print(f"Upgraded to schema {SCHEMA_VERSION} (steps {', '.join(map(str, result.applied))}).")
+        if result.backup:
+            print(f"Backup of the previous database: {result.backup}")
+    else:
+        print(f"Database is at schema {SCHEMA_VERSION}; nothing to do.")
     return 0
 
 
@@ -116,18 +171,19 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--config", help="YAML configuration file (default: ./config.yml if present)")
         p.add_argument("--data-dir", dest="data_dir", help="where images, masks and the database live")
 
-    serve = sub.add_parser("serve", help="run the web server")
+    serve = sub.add_parser("serve", help="run the web server (upgrades an older database first)")
     common(serve)
     serve.add_argument("--host")
     serve.add_argument("--port", type=int)
     serve.add_argument("--demo", action="store_true", help="seed demo accounts and synthetic images")
     serve.set_defaults(func=cmd_serve)
 
-    create = sub.add_parser("create-user", help="create an account")
+    create = sub.add_parser("create-user", help="create an account (every user can annotate and review)")
     common(create)
     create.add_argument("email")
     create.add_argument("--name")
-    create.add_argument("--role", choices=["annotator", "reviewer", "admin"], default="annotator")
+    create.add_argument("--admin", action="store_true",
+                        help="also allow administration: projects, classes, accounts")
     create.add_argument("--password", help="omit to be prompted")
     create.set_defaults(func=cmd_create_user)
 
@@ -139,6 +195,14 @@ def build_parser() -> argparse.ArgumentParser:
     demo = sub.add_parser("seed-demo", help="add the demo project and demo accounts")
     common(demo)
     demo.set_defaults(func=cmd_seed_demo)
+
+    status = sub.add_parser("db-status", help="show the stored database schema and any pending upgrade")
+    common(status)
+    status.set_defaults(func=cmd_db_status)
+
+    migrate = sub.add_parser("migrate", help="back up and upgrade the database without starting the server")
+    common(migrate)
+    migrate.set_defaults(func=cmd_migrate)
     return parser
 
 

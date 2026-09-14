@@ -237,3 +237,90 @@ ruff clean.
 ## Next action
 
 - None; goal complete. Follow-ups unchanged from the previous goal.
+
+---
+
+# Goal (set 2026-09-14) — every user can Annotate and Review
+
+## Objective
+
+Ordinary users are no longer permanently `annotator` or `reviewer`. Every active user can both
+annotate and review, and switches an **active working mode** (Annotate / Review) from the web
+UI. Account privilege (administrator) is separate from working mode. Nobody reviews their own
+submission under the normal configuration. Establish a maintainable schema migration approach.
+Extend pytest, JS and Playwright coverage (two users alternately annotating and reviewing each
+other's work), update README/specs/architecture/help, release, tag, and roll the release into
+`ml_server_deploy` so the whole suite installs in one go at the office.
+
+## Decisions
+
+1. **Schema 3: `users.role` is replaced by `is_admin` (privilege) and `active_mode`
+   (`annotate` | `review`, persisted server-side).** A per-user server-side mode means the
+   server can enforce it (cardinal rule 4) and it survives sign-out and a different desk.
+2. **The mode is enforced on the server, not only shown.** Annotate mode: edit images that are
+   not waiting for review, import masks, submit. Review mode: correct a submission and approve
+   or request changes. Withdrawing your own submission works in either mode (it only takes back
+   your own work). Admin privileges (projects, classes, users, delete images, break leases) do
+   not depend on mode. Uploading images, splits, assignments and exports, formerly reviewer-only,
+   are open to every active user in either mode, because every user now has the former reviewer
+   capability.
+3. **Own-submission protection.** Unless `allow_self_approval: true`, a user can neither approve
+   nor request changes on their own submission, and their own submissions never appear in their
+   review queue or its counts. With the setting on, they appear (the old semantics).
+   Withdraw is limited to the submitter or an administrator. It used to be open to any reviewer,
+   and now that everyone can review, keeping that would have let anyone take back anyone's work.
+4. **Numbered migration registry** (`db.MIGRATIONS`): a fresh database is created from the
+   models and stamped with the current version. An older database first gets a consistent
+   SQLite backup under `<data>/backups/`, then each step runs in its own transaction and stamps
+   `PRAGMA user_version` as it goes. A newer database still refuses to start. The CLI gains
+   `db-status` and `migrate` for operators. No Alembic: it is not in the small runtime set, and
+   SQLite-only numbered steps are enough.
+5. **Migration 3 maps old roles:** `admin` → `is_admin`, `reviewer` → starts in Review mode,
+   then drops `role` (SQLite ≥ 3.35; refused with a clear message otherwise). This keeps the
+   users table from carrying a dead NOT NULL column that would break inserts.
+6. **Version 2.0.0:** the user JSON loses `role`, `create-user --role` becomes `--admin`, and
+   the schema goes to 3. Health contract and export manifest are unchanged (`reviewer_edit`
+   stays as a stored version kind: it describes the edit, not a person's role).
+7. Demo accounts become two ordinary users (`arun@demo.local`, `riya@demo.local`) plus the
+   administrator, so the two-person workflow can be tried and E2E-tested.
+
+## Plan / status
+
+- [x] 1. Backend: `models.User` (`is_admin`, `active_mode`), `db.py` migration registry (schema 3,
+  backup, `schema_status`), `services/access.py`, workflow rules (mode, own submission, withdraw),
+  `projects.review_queue/annotate_queue/queue_counts`, `PUT /auth/mode`, `next` defaults to mode,
+  project `queue`, CLI `create-user --admin`, `db-status`, `migrate`, demo users arun/riya/admin
+- [x] 2. pytest: fixtures alice/bob/carol/admin; new `test_modes.py` (19) and `test_migrations.py`
+  (upgrades SQL dumps written by the real v1.0.1 and v1.1.1 code, `tests/fixtures/db_v*.sql`)
+- [x] 3. Frontend: top-bar Annotate/Review radio switch (save + leave + switch + redraw, other tabs
+  follow), mode notes and mode-led actions on dashboard/project, "For me to review" filter,
+  "yours" tag, workspace banners per mode, Users page privilege + mode, Help centre section
+- [x] 4. Playwright: journeys updated; `modes.spec.js` (two users in both directions, return and
+  resubmission, own submission, remembered mode, mode switch with unsaved work, admin)
+- [x] 5. Docs: README, SPECIFICATIONS (v2.0, §10 schema), ARCHITECTURE, DEPLOYMENT, EXPORT_FORMAT,
+  AGENTS.md, config.example.yml, CHANGELOG 2.0.0, `_version.py` 2.0.0
+- [ ] 6. Full verification, release 2.0.0, tag, push, CI green
+- [ ] 7. ml_server_deploy: annotator ref v2.0.0, suite 1.10.0, RUNBOOK/manifest notes (edited,
+  unit tests 72 passed, hygiene clean, manifest validates), commit, tag, release
+
+## Defects found while testing (fixed)
+
+- Router dropped a hash navigation that arrived while a view was still being drawn (exposed by
+  switching mode and then immediately navigating): `main.js` now renders again afterwards.
+- A project page left open never updated "Review next (n)": the 20 s gallery refresh now also
+  refreshes the header counts.
+
+## Verification so far (2026-09-14)
+
+| Check | Result |
+| --- | --- |
+| `python -m pytest` | 96 passed (incl. Node label-engine tests) |
+| `ruff check src tests` | clean |
+| ml_server_deploy `pytest tests/unit`, text hygiene, `manifest.py --validate` | 72 passed, clean, OK |
+| `node --test tests/js/labelmap.test.mjs` | 8 passed |
+| `npm run test:browser` (Playwright, Chromium) | 13 passed (7 journeys + 6 two-person mode journeys); earlier runs 9/13 failed on the two defects above |
+| Visual check | screenshots of Annotate dashboard, Review project page, review workspace |
+
+Note: this session overwrote the untracked, git-ignored `.claude/launch.json` (it held an
+`annotator-demo` preview entry on port 5071 from the 2026-09-11 session) without reading it
+first; it was re-created with an equivalent entry.

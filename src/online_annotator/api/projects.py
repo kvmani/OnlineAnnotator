@@ -12,12 +12,12 @@ from sqlalchemy.orm import Session
 from ..config import Settings
 from ..db import get_db
 from ..models import AuditEvent, Export, Image, LabelClass, Project, User
-from ..services import audit, imaging, workflow
+from ..services import access, audit, imaging, workflow
 from ..services import exports as export_ops
 from ..services import labels as label_ops
 from ..services import projects as project_ops
 from . import serialize
-from .deps import active_user, admin, get_project, get_settings, reviewer
+from .deps import active_user, admin, get_project, get_settings
 from .schemas import (
     BulkImageUpdateBody,
     ClassBody,
@@ -25,6 +25,7 @@ from .schemas import (
     ExportBody,
     ProjectCreateBody,
     ProjectUpdateBody,
+    WorkingMode,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["projects"])
@@ -32,11 +33,11 @@ router = APIRouter(prefix="/api/v1", tags=["projects"])
 
 @router.get("/projects")
 def list_projects(include_archived: bool = False, db: Session = Depends(get_db),
-                  _: User = Depends(active_user)) -> dict:
+                  user: User = Depends(active_user), settings: Settings = Depends(get_settings)) -> dict:
     query = db.query(Project).order_by(Project.name)
     if not include_archived:
         query = query.filter(Project.archived.is_(False))
-    return {"projects": [serialize.project(p) for p in query.all()]}
+    return {"projects": [serialize.project(p, viewer=user, settings=settings) for p in query.all()]}
 
 
 @router.post("/projects")
@@ -62,8 +63,9 @@ def create_project(body: ProjectCreateBody, db: Session = Depends(get_db), actor
 
 
 @router.get("/projects/{project_id}")
-def project_detail(project_id: int, db: Session = Depends(get_db), _: User = Depends(active_user)) -> dict:
-    return {"project": serialize.project(get_project(project_id, db), detail=True)}
+def project_detail(project_id: int, db: Session = Depends(get_db), user: User = Depends(active_user),
+                   settings: Settings = Depends(get_settings)) -> dict:
+    return {"project": serialize.project(get_project(project_id, db), detail=True, viewer=user, settings=settings)}
 
 
 @router.patch("/projects/{project_id}")
@@ -181,7 +183,7 @@ async def upload_images(project_id: int, files: list[UploadFile] = File(...), sp
 
 @router.post("/projects/{project_id}/images/bulk")
 def bulk_update(project_id: int, body: BulkImageUpdateBody, db: Session = Depends(get_db),
-                actor: User = Depends(reviewer), settings: Settings = Depends(get_settings)) -> dict:
+                actor: User = Depends(active_user), settings: Settings = Depends(get_settings)) -> dict:
     project = get_project(project_id, db)
     targets = [i for i in project.images if i.id in set(body.image_ids)]
     for img in targets:
@@ -197,12 +199,12 @@ def bulk_update(project_id: int, body: BulkImageUpdateBody, db: Session = Depend
 
 
 @router.get("/projects/{project_id}/next")
-def next_image(project_id: int, mode: str = "annotate", after: int | None = None, db: Session = Depends(get_db),
-               user: User = Depends(active_user)) -> dict:
+def next_image(project_id: int, mode: WorkingMode | None = None, after: int | None = None,
+               db: Session = Depends(get_db), user: User = Depends(active_user),
+               settings: Settings = Depends(get_settings)) -> dict:
+    """The next image to open. ``mode`` defaults to the user's active working mode."""
     project = get_project(project_id, db)
-    if mode == "review" and not user.can_review:
-        raise HTTPException(403, "Reviewing needs the reviewer role.")
-    img = project_ops.next_image(db, project, user, after, mode)
+    img = project_ops.next_image(db, settings, project, user, after, mode or user.active_mode)
     return {"image_id": img.id if img else None}
 
 
@@ -220,6 +222,10 @@ async def import_masks(project_id: int, files: list[UploadFile] = File(...), imp
     every image the batch touches.
     """
     project = get_project(project_id, db)
+    try:
+        access.require_mode(user, access.ANNOTATE, "import masks")
+    except access.Refused as exc:
+        raise HTTPException(exc.status, str(exc)) from exc
     classes = {c.index: c.color for c in project.classes}
     target = import_class if import_class in classes else min(classes)
     by_stem: dict[str, Image] = {}
@@ -269,7 +275,7 @@ def _options(body: ExportBody) -> export_ops.ExportOptions:
 
 @router.post("/projects/{project_id}/exports/preview")
 def export_preview(project_id: int, body: ExportBody, db: Session = Depends(get_db),
-                   _: User = Depends(reviewer)) -> dict:
+                   _: User = Depends(active_user)) -> dict:
     try:
         return export_ops.preview(get_project(project_id, db), _options(body))
     except export_ops.ExportError as exc:
@@ -278,7 +284,7 @@ def export_preview(project_id: int, body: ExportBody, db: Session = Depends(get_
 
 @router.post("/projects/{project_id}/exports")
 def create_export(project_id: int, body: ExportBody, db: Session = Depends(get_db),
-                  actor: User = Depends(reviewer), settings: Settings = Depends(get_settings)) -> dict:
+                  actor: User = Depends(active_user), settings: Settings = Depends(get_settings)) -> dict:
     project = get_project(project_id, db)
     options = _options(body)
     try:

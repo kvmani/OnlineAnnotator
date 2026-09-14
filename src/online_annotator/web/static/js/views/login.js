@@ -4,9 +4,9 @@ import { app } from "../state.js";
 import { h, helpTip, toast } from "../ui.js";
 
 const DEMO_ACCOUNTS = [
-  ["annotator@demo.local", "annotate-demo-1", "Annotator: label and submit"],
-  ["reviewer@demo.local", "review-demo-1", "Reviewer: approve, correct, export"],
-  ["admin@demo.local", "admin-demo-1", "Administrator: projects, classes, users"],
+  ["arun@demo.local", "arun-demo-1", "Arun: annotates and reviews"],
+  ["riya@demo.local", "riya-demo-1", "Riya: annotates and reviews"],
+  ["admin@demo.local", "admin-demo-1", "Administrator: also projects, classes, users"],
 ];
 
 export function loginForm({ onDone, presetEmail = "" }) {
@@ -88,7 +88,7 @@ export function renderLogin(view, { onDone }) {
     loginForm({ onDone }));
   if (demo) {
     const list = h("div", { class: "demo-accounts" }, h("div", { class: "field-label" }, "Demo accounts ",
-      helpTip("This server runs in demo mode. Pick a role to see what it can do. Never use demo mode for real work.")));
+      helpTip("This server runs in demo mode. Arun and Riya are ordinary users who can each annotate and review: submit work as one of them, then sign in as the other (for example in a private window) and review it in Review mode. Never use demo mode for real work.")));
     for (const [email, pw, desc] of DEMO_ACCOUNTS) {
       const b = h("button", { class: "demo-account", type: "button" }, h("strong", {}, email), h("span", {}, desc));
       b.addEventListener("click", () => {

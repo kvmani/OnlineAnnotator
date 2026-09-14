@@ -23,10 +23,12 @@ from .auth import generate_temporary_password, hash_password
 logger = logging.getLogger(__name__)
 
 DEMO_PROJECT = "Demo - Hydride platelets in Zr alloy"
+# (e-mail, name, is administrator, password). Two ordinary users, so one can submit work
+# and the other review it -- each of them can do both.
 DEMO_USERS = (
-    ("admin@demo.local", "Demo Administrator", "admin", "admin-demo-1"),
-    ("reviewer@demo.local", "Riya Reviewer", "reviewer", "review-demo-1"),
-    ("annotator@demo.local", "Arun Annotator", "annotator", "annotate-demo-1"),
+    ("admin@demo.local", "Demo Administrator", True, "admin-demo-1"),
+    ("arun@demo.local", "Arun Kumar", False, "arun-demo-1"),
+    ("riya@demo.local", "Riya Sharma", False, "riya-demo-1"),
 )
 DEMO_CLASSES = (
     (1, "Hydride", "#FF0000", "Dark, thin, elongated platelets. Trace the full visible length; include the "
@@ -98,7 +100,7 @@ def bootstrap_admin(db: Session, settings: Settings, email: str | None, password
     email = (email or "admin@localhost.localdomain").strip().lower()
     generated = password is None
     password = password or generate_temporary_password()
-    db.add(User(email=email, full_name="Administrator", role="admin", password_hash=hash_password(password),
+    db.add(User(email=email, full_name="Administrator", is_admin=True, password_hash=hash_password(password),
                 must_change_password=generated))
     db.commit()
     audit.record(db, settings.audit_file, "system", "user_created", f"First administrator {email} created.")
@@ -116,9 +118,9 @@ def seed_demo(db: Session, settings: Settings, image_count: int = 6) -> Project:
     """Create demo accounts and a demo project with synthetic micrographs (idempotent)."""
     from .projects import add_uploaded_image  # local import avoids a cycle
 
-    for email, name, role, password in DEMO_USERS:
+    for email, name, is_admin, password in DEMO_USERS:
         if not db.query(User).filter(User.email == email).first():
-            db.add(User(email=email, full_name=name, role=role, password_hash=hash_password(password)))
+            db.add(User(email=email, full_name=name, is_admin=is_admin, password_hash=hash_password(password)))
     db.commit()
     project = db.query(Project).filter(Project.name == DEMO_PROJECT).first()
     if project is None:

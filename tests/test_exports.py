@@ -10,17 +10,16 @@ from PIL import Image as PILImage
 
 from online_annotator.services.exports import _rle, yolo_available
 
-from .conftest import put_labels, sample_image
+from .conftest import annotate_and_submit, put_labels, review, sample_image, set_mode
 
 W, H = 64, 48
 
 
-def approve(ann, rev, image_id, labels):
-    ann.post(f"/api/v1/images/{image_id}/lock")
-    detail = ann.get(f"/api/v1/images/{image_id}").json()["image"]
-    assert put_labels(ann, image_id, labels, detail["working_revision"]).status_code == 200
-    assert ann.post(f"/api/v1/images/{image_id}/submit", json={}).status_code == 200
-    assert rev.post(f"/api/v1/images/{image_id}/review", json={"decision": "approve"}).status_code == 200
+def approve(author, reviewer, image_id, labels):
+    """``author`` annotates and submits; ``reviewer`` switches to Review mode and approves."""
+    annotate_and_submit(author, image_id, labels)
+    set_mode(reviewer, "review")
+    assert review(reviewer, image_id).status_code == 200
 
 
 def labels_a():
@@ -36,23 +35,23 @@ def read_zip(client, export):
     return zipfile.ZipFile(io.BytesIO(r.content))
 
 
-def test_nothing_approved_means_clear_error(rev, project_id, image_id):
-    preview = rev.post(f"/api/v1/projects/{project_id}/exports/preview", json={}).json()
+def test_nothing_approved_means_clear_error(bob, project_id, image_id):
+    preview = bob.post(f"/api/v1/projects/{project_id}/exports/preview", json={}).json()
     assert preview["image_count"] == 0 and preview["warnings"]
-    r = rev.post(f"/api/v1/projects/{project_id}/exports", json={})
+    r = bob.post(f"/api/v1/projects/{project_id}/exports", json={})
     assert r.status_code == 400 and "Nothing to export" in r.json()["detail"]
 
 
-def test_hydride_pairs_binary_export_is_exact(ann, rev, project_id, image_id):
-    approve(ann, rev, image_id, labels_a())
+def test_hydride_pairs_binary_export_is_exact(alice, bob, project_id, image_id):
+    approve(alice, bob, image_id, labels_a())
     # A second, unapproved image must not leak into the export.
-    ann.post(f"/api/v1/projects/{project_id}/images", files=[("files", ("b.png", sample_image(seed=5), "image/png"))])
-    preview = rev.post(f"/api/v1/projects/{project_id}/exports/preview", json={}).json()
+    alice.post(f"/api/v1/projects/{project_id}/images", files=[("files", ("b.png", sample_image(seed=5), "image/png"))])
+    preview = bob.post(f"/api/v1/projects/{project_id}/exports/preview", json={}).json()
     assert preview["image_count"] == 1 and preview["skipped"]["no_annotation"] == 1
 
-    export = rev.post(f"/api/v1/projects/{project_id}/exports", json={"layout": "hydride_pairs",
+    export = bob.post(f"/api/v1/projects/{project_id}/exports", json={"layout": "hydride_pairs",
                                                                         "mask_style": "binary"}).json()["export"]
-    zf = read_zip(rev, export)
+    zf = read_zip(bob, export)
     names = set(zf.namelist())
     assert {"pairs/sample_one.png", "pairs/sample_one_mask.png", "manifest.json", "README.txt",
             "coco_annotations.json"} <= names
@@ -62,22 +61,22 @@ def test_hydride_pairs_binary_export_is_exact(ann, rev, project_id, image_id):
     manifest = json.loads(zf.read("manifest.json"))
     rec = manifest["images"][0]
     assert manifest["schema"] == "online-annotator.export/1"
-    assert rec["approved_by"] == "rev@lab.test" and rec["annotated_by"] == "ann@lab.test"
+    assert rec["approved_by"] == "bob@lab.test" and rec["annotated_by"] == "alice@lab.test"
     assert rec["class_pixels"] == {"1": 180, "2": 16}
-    assert rec["contributors"] == ["ann@lab.test"]
+    assert rec["contributors"] == ["alice@lab.test"]
     assert rec["approved_at"].endswith("+00:00") and rec["approved_at"] >= rec["annotated_at"]
-    listed = rev.get(f"/api/v1/projects/{project_id}/exports").json()["exports"]
+    listed = bob.get(f"/api/v1/projects/{project_id}/exports").json()["exports"]
     assert listed[0]["image_count"] == 1
-    summary = rev.get(f"/api/v1/projects/{project_id}/summary").json()
+    summary = bob.get(f"/api/v1/projects/{project_id}/summary").json()
     assert summary["approved_pixels"] == W * H and summary["class_fractions"]["1"] == 180 / (W * H)
 
 
-def test_split_folders_indexed_auto_split_and_coco_rle(ann, rev, project_id, image_id):
-    approve(ann, rev, image_id, labels_a())
-    export = rev.post(f"/api/v1/projects/{project_id}/exports", json={
+def test_split_folders_indexed_auto_split_and_coco_rle(alice, bob, project_id, image_id):
+    approve(alice, bob, image_id, labels_a())
+    export = bob.post(f"/api/v1/projects/{project_id}/exports", json={
         "layout": "split_folders", "mask_style": "indexed", "split_mode": "auto", "train": 1, "val": 0,
         "test": 0}).json()["export"]
-    zf = read_zip(rev, export)
+    zf = read_zip(bob, export)
     mask = np.asarray(PILImage.open(io.BytesIO(zf.read("train/masks/sample_one_mask.png"))))
     np.testing.assert_array_equal(mask, labels_a())
     coco = json.loads(zf.read("coco_annotations.json"))
@@ -93,36 +92,38 @@ def test_split_folders_indexed_auto_split_and_coco_rle(ann, rev, project_id, ima
     np.testing.assert_array_equal(decoded, (labels_a() == 1).astype(np.uint8))
 
 
-def test_red_style_matches_hydride_rgb_rule(ann, rev, project_id, image_id):
-    approve(ann, rev, image_id, labels_a())
-    export = rev.post(f"/api/v1/projects/{project_id}/exports", json={"mask_style": "red",
+def test_red_style_matches_hydride_rgb_rule(alice, bob, project_id, image_id):
+    approve(alice, bob, image_id, labels_a())
+    export = bob.post(f"/api/v1/projects/{project_id}/exports", json={"mask_style": "red",
                                                                         "include_coco": False}).json()["export"]
-    zf = read_zip(rev, export)
+    zf = read_zip(bob, export)
     rgb = np.asarray(PILImage.open(io.BytesIO(zf.read("pairs/sample_one_mask.png"))).convert("RGB"))
     red = (rgb[:, :, 0] >= 200) & (rgb[:, :, 1] <= 60) & (rgb[:, :, 2] <= 60)
     np.testing.assert_array_equal(red, labels_a() == 1)
     assert "coco_annotations.json" not in zf.namelist()
 
 
-def test_unreviewed_only_when_asked(ann, rev, project_id, image_id):
-    ann.post(f"/api/v1/images/{image_id}/lock")
-    put_labels(ann, image_id, labels_a(), 0)
-    ann.post(f"/api/v1/images/{image_id}/submit", json={})
-    assert rev.post(f"/api/v1/projects/{project_id}/exports/preview", json={}).json()["image_count"] == 0
-    preview = rev.post(f"/api/v1/projects/{project_id}/exports/preview",
+def test_unreviewed_only_when_asked(alice, bob, project_id, image_id):
+    alice.post(f"/api/v1/images/{image_id}/lock")
+    put_labels(alice, image_id, labels_a(), 0)
+    alice.post(f"/api/v1/images/{image_id}/submit", json={})
+    assert bob.post(f"/api/v1/projects/{project_id}/exports/preview", json={}).json()["image_count"] == 0
+    preview = bob.post(f"/api/v1/projects/{project_id}/exports/preview",
                        json={"include": "approved_and_submitted"}).json()
     assert preview["image_count"] == 1 and any("not yet reviewed" in w for w in preview["warnings"])
 
 
-def test_annotators_cannot_export(ann, project_id):
-    assert ann.post(f"/api/v1/projects/{project_id}/exports", json={}).status_code == 403
+def test_every_user_can_export_in_either_mode(alice, bob, project_id, image_id):
+    approve(alice, bob, image_id, labels_a())
+    assert alice.post(f"/api/v1/projects/{project_id}/exports", json={}).status_code == 200  # Annotate mode
+    assert bob.post(f"/api/v1/projects/{project_id}/exports", json={}).status_code == 200  # Review mode
 
 
 @pytest.mark.skipif(not yolo_available(), reason="OpenCV not installed")
-def test_yolo_polygons(ann, rev, project_id, image_id):
-    approve(ann, rev, image_id, labels_a())
-    export = rev.post(f"/api/v1/projects/{project_id}/exports", json={"include_yolo": True}).json()["export"]
-    zf = read_zip(rev, export)
+def test_yolo_polygons(alice, bob, project_id, image_id):
+    approve(alice, bob, image_id, labels_a())
+    export = bob.post(f"/api/v1/projects/{project_id}/exports", json={"include_yolo": True}).json()["export"]
+    zf = read_zip(bob, export)
     lines = zf.read("pairs_yolo/sample_one.txt").decode().strip().splitlines()
     assert {line.split()[0] for line in lines} == {"0", "1"}
     assert "names:" in zf.read("yolo_data.yaml").decode()

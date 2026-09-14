@@ -19,16 +19,22 @@ no external services and no JavaScript build. Two supported ways to run it:
 ```bash
 sudo useradd --system --home /var/lib/online-annotator --create-home annotator
 sudo mkdir -p /opt/online-annotator /etc/online-annotator
-sudo tar -xzf online-annotator-1.0.1.tar.gz -C /opt/online-annotator   # or git clone on the internet side
-sudo ln -sfn /opt/online-annotator/OnlineAnnotator-1.0.1 /opt/online-annotator/current
+sudo tar -xzf online-annotator-2.0.0.tar.gz -C /opt/online-annotator   # or git clone on the internet side
+sudo ln -sfn /opt/online-annotator/OnlineAnnotator-2.0.0 /opt/online-annotator/current
 sudo python3 -m venv /opt/online-annotator/venv
 sudo /opt/online-annotator/venv/bin/pip install -r /opt/online-annotator/current/requirements.txt
 sudo cp /opt/online-annotator/current/deploy/online-annotator.env.example /etc/online-annotator/online-annotator.env
 sudo chmod 600 /etc/online-annotator/online-annotator.env      # edit: portal URL, admin e-mail …
 sudo cp /opt/online-annotator/current/deploy/online-annotator.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now online-annotator
-curl -s http://127.0.0.1:5070/api/health    # {"status":"ok","tool_id":"online-annotator","version":"1.0.1"}
+curl -s http://127.0.0.1:5070/api/health    # {"status":"ok","tool_id":"online-annotator","version":"2.0.0"}
 ```
+
+### Accounts
+
+Every account can annotate and review; people switch between **Annotate** and **Review** themselves
+at the top of the page, and nobody reviews their own submissions. Administrator is a separate
+privilege (projects, classes, accounts), granted with `--admin` or the Users page.
 
 ### First administrator
 
@@ -43,8 +49,11 @@ When the user table is empty the service creates the first administrator:
 Command-line helpers (run as the service user, same env file):
 
 ```bash
-python -m online_annotator create-user lead@lab.example --role admin --name "Lead Scientist"
+python -m online_annotator create-user lead@lab.example --admin --name "Lead Scientist"
+python -m online_annotator create-user someone@lab.example --name "Some One"   # annotates and reviews
 python -m online_annotator reset-password someone@lab.example     # also re-enables a disabled account
+python -m online_annotator db-status      # stored schema, pending upgrade (exit 0 / 1 / 2)
+python -m online_annotator migrate        # back up and upgrade the database without serving
 ```
 
 ## Inside the ml_server suite
@@ -54,7 +63,7 @@ python -m online_annotator reset-password someone@lab.example     # also re-enab
 ```yaml
 annotator:
   repo: kvmani/OnlineAnnotator
-  ref: v1.0.1
+  ref: v2.0.0
   port: 5070
   health: /api/health
   public_url_env: ONLINE_ANNOTATOR_URL          # the portal catalog links here
@@ -82,7 +91,8 @@ Production checklist:
 - [ ] `host: 0.0.0.0` only if other machines connect directly; otherwise keep the gateway in front.
 - [ ] `portal_url` set so users can get back to the tools portal.
 - [ ] `cookie_secure: true` when served over HTTPS.
-- [ ] `allow_self_approval: false` unless a single person does all the work.
+- [ ] `allow_self_approval: false` unless a single person does all the work (with it off, a second
+      person reviews every submission).
 - [ ] SMTP configured before enabling `self_registration`.
 - [ ] Backups scheduled (below) and a restore rehearsed once.
 
@@ -110,10 +120,26 @@ PNGs and the audit log are plain files and can be inspected without the applicat
 ## Upgrade and rollback
 
 1. Back up (above). 2. Install the new release next to the old one and switch the `current`
-link. 3. Restart and check `/api/health` shows the new version. 4. Rollback = switch the link
-back and restart. The database records its schema version; a release refuses to start on a
-schema newer than it understands, so an accidental downgrade fails loudly instead of corrupting
-data.
+link. 3. Optionally run `online-annotator db-status` to see whether the database will be upgraded.
+4. Restart and check `/api/health` shows the new version.
+
+The database records its schema version (`PRAGMA user_version`). When a release finds an older
+schema it first saves a consistent copy to `<data_dir>/backups/<db>.schema<N>.<UTC>.sqlite3`,
+then upgrades it step by step (each step is idempotent, so an interrupted upgrade is simply
+started again); the journal records the backup path and each step. A release refuses to start on
+a schema newer than it understands, so an accidental downgrade fails loudly instead of
+corrupting data.
+
+Rollback = switch the link back and restart. If the newer release upgraded the schema, the older
+release will refuse the database: stop the service, move the upgraded database aside, copy the
+backup from `backups/` back as `online_annotator.sqlite3`, and start the older release. Work done
+after the upgrade is only in the set-aside copy.
+
+| Release | Schema | Upgrade adds |
+| --- | --- | --- |
+| 1.0.x | 1 | — |
+| 1.1.x | 2 | mask provenance |
+| 2.0.x | 3 | working modes: `users.role` becomes `is_admin` + `active_mode` (administrators stay administrators, reviewers start in Review mode) |
 
 ## Monitoring
 
@@ -128,6 +154,9 @@ data.
 | --- | --- |
 | "Request blocked: missing client header" | A proxy strips `X-Requested-With`; allow the header. |
 | Users are signed out quickly | `session_hours` too small, or clocks differ between proxy and server. |
-| "Database schema … is newer than this release" | A newer release ran on this data; start that release or restore a matching backup. |
+| "Database schema … is newer than this release" | A newer release ran on this data; start that release or restore the copy in `backups/`. |
+| "Upgrading the database needs SQLite 3.35 or newer" | Use a Python whose `sqlite3.sqlite_version` is ≥ 3.35 (Ubuntu 22.04 and later). |
+| "You are in Review mode. Switch to Annotate mode …" (or the reverse) | Not a fault: that person switches with Annotate / Review at the top of the page. |
+| Nobody can approve a submission | Everyone else is in Annotate mode, or only its author is available; someone else switches to Review. `allow_self_approval` exists for one-person teams. |
 | Uploads fail at the proxy | Raise the proxy body-size limit to `max_upload_mb`. |
 | YOLO option greyed out | Install `opencv-python-headless` in the service environment. |

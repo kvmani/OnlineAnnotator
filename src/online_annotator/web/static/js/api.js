@@ -50,6 +50,7 @@ export async function request(method, url, { json, body, headers = {}, raw = fal
 export const api = {
   get: (url) => request("GET", url),
   post: (url, json = {}) => request("POST", url, { json }),
+  put: (url, json = {}) => request("PUT", url, { json }),
   patch: (url, json = {}) => request("PATCH", url, { json }),
   del: (url) => request("DELETE", url),
   form: (url, formData) => request("POST", url, { body: formData }),

@@ -1,8 +1,9 @@
-// Projects dashboard with a first-run quick start and the new-project wizard.
+// Projects dashboard: what waits for me in my current working mode, a first-run quick start
+// and the new-project wizard.
 import { api } from "../api.js";
-import { go, setCrumbs } from "../nav.js";
-import { app, canReview, isAdmin, savePref } from "../state.js";
-import { emptyState, field, h, helpTip, icon, modal, toast } from "../ui.js";
+import { go, modeButton, setCrumbs } from "../nav.js";
+import { MODE_HELP, app, inReview, isAdmin, savePref } from "../state.js";
+import { emptyState, field, h, helpTip, icon, modal, plural, toast } from "../ui.js";
 
 export async function renderHome(view) {
   setCrumbs([{ label: "Projects" }]);
@@ -24,7 +25,10 @@ export async function renderHome(view) {
 
   const active = projects.filter((p) => !p.archived);
   const archived = projects.filter((p) => p.archived);
-  if (!active.length) {
+  if (active.length) {
+    const sum = (key) => active.reduce((n, p) => n + ((p.queue && p.queue[key]) || 0), 0);
+    page.append(modeNote(sum("review"), sum("own_pending")));
+  } else {
     page.append(emptyState("folder", "No projects yet",
       isAdmin() ? "Create the first project: give it a name and the classes you want to label (for example Hydride)."
         : "An administrator needs to create a project and add you to the work. Ask them, or read the Help centre meanwhile.",
@@ -42,6 +46,23 @@ export async function renderHome(view) {
   return {};
 }
 
+// One line that says which mode is on, what is waiting in it, and how to get to the other one.
+export function modeNote(waitingForMe, ownPending = 0) {
+  const review = inReview();
+  const own = ownPending ? ` ${plural(ownPending, "submission")} of yours ${ownPending === 1 ? "is" : "are"} waiting for someone else.` : "";
+  const text = review
+    ? (waitingForMe ? `${plural(waitingForMe, "submission")} from other people ${waitingForMe === 1 ? "is" : "are"} waiting for your review.` : "Nothing from other people is waiting for review right now.") + own
+    : "Label images and submit them for review." + (waitingForMe ? ` ${plural(waitingForMe, "submission")} from other people ${waitingForMe === 1 ? "is" : "are"} waiting for review.` : "");
+  const other = review
+    ? (waitingForMe ? null : modeButton("annotate"))
+    : (waitingForMe ? modeButton("review") : null);
+  return h("div", { class: `mode-note mode-note-${review ? "review" : "annotate"}`, role: "status" },
+    icon(review ? "review" : "edit", 16),
+    h("span", {}, h("strong", {}, review ? "Review mode. " : "Annotate mode. "), text),
+    helpTip(`${MODE_HELP[review ? "review" : "annotate"]} Switch at any time with Annotate / Review at the top of the page.`),
+    h("span", { class: "spacer" }), other);
+}
+
 function progressBar(counts) {
   const total = counts.total || 0;
   const seg = (key, cls) => {
@@ -55,7 +76,9 @@ function progressBar(counts) {
 
 function projectCard(p) {
   const c = p.counts;
+  const q = p.queue || { annotate: 0, review: 0, own_pending: 0 };
   const pct = c.total ? Math.round((100 * c.approved) / c.total) : 0;
+  const review = inReview();
   const card = h("article", { class: "project-card" },
     h("div", { class: "project-card-head" },
       h("h3", {}, h("a", { href: `#/p/${p.id}` }, p.name)),
@@ -67,12 +90,17 @@ function projectCard(p) {
     h("div", { class: "project-stats" },
       h("span", {}, h("strong", {}, c.total), " images"),
       h("span", {}, h("strong", {}, c.approved), ` approved (${pct}%)`),
-      c.submitted ? h("span", { class: "text-submitted" }, h("strong", {}, c.submitted), " to review") : null,
-      c.changes_requested ? h("span", { class: "text-changes" }, h("strong", {}, c.changes_requested), " returned") : null));
+      review
+        ? h("span", { class: "text-submitted" }, h("strong", {}, q.review), " for you to review")
+        : (c.submitted ? h("span", { class: "text-submitted" }, h("strong", {}, c.submitted), " waiting for review") : null),
+      !review && c.changes_requested ? h("span", { class: "text-changes" }, h("strong", {}, c.changes_requested), " returned") : null));
   const actions = h("div", { class: "card-actions" },
-    h("a", { class: "btn btn-primary btn-small", href: `#/p/${p.id}` }, "Open"),
-    c.total ? h("button", { class: "btn btn-small", type: "button", onclick: () => startNext(p.id, "annotate") }, icon("play", 14), "Annotate next") : null,
-    canReview() && c.submitted ? h("button", { class: "btn btn-small", type: "button", onclick: () => startNext(p.id, "review") }, icon("review", 14), "Review next") : null);
+    h("a", { class: "btn btn-small", href: `#/p/${p.id}` }, "Open"),
+    review
+      ? h("button", { class: "btn btn-primary btn-small", type: "button", disabled: !q.review, onclick: () => startNext(p.id, "review"),
+        title: q.review ? "Open the oldest submission from someone else" : "Nothing from other people is waiting for review" },
+      icon("review", 14), `Review next${q.review ? ` (${q.review})` : ""}`)
+      : (c.total ? h("button", { class: "btn btn-primary btn-small", type: "button", onclick: () => startNext(p.id, "annotate") }, icon("play", 14), "Annotate next") : null));
   card.append(actions);
   return card;
 }
@@ -82,7 +110,7 @@ export async function startNext(projectId, mode, after = null) {
     const url = `api/v1/projects/${projectId}/next?mode=${mode}` + (after ? `&after=${after}` : "");
     const { image_id } = await api.get(url);
     if (image_id) go(`#/p/${projectId}/i/${image_id}`);
-    else toast(mode === "review" ? "Nothing is waiting for review right now." : "No free image needs annotating right now. Everything is submitted, approved, or being edited by someone else.", "info", 6000);
+    else toast(mode === "review" ? "Nothing from other people is waiting for review right now. Your own submissions are reviewed by someone else." : "No free image needs annotating right now. Everything is submitted, approved, or being edited by someone else.", "info", 6000);
   } catch (err) {
     toast(err.message, "error");
   }
@@ -95,9 +123,10 @@ function quickStart() {
     h("ol", { class: "steps" },
       step(1, "Open a project and press Annotate next", "You get the next image nobody else is working on. It is reserved for you while it is open."),
       step(2, "Label the pixels", "Pick a class, then paint with the Brush or use Polygon, Lasso, Magic wand or Box threshold. Work is saved automatically."),
-      step(3, "Submit for review", "A reviewer approves it or returns it with a comment. Only approved images become training data."),
-      step(4, "Export the dataset", "Reviewers download a ZIP ready for HydrideSegmentation or other training code, with full provenance.")),
-    h("p", { class: "small" }, "Stuck? Every screen has ", h("span", { class: "help-tip inline" }, "?"), " buttons, and ", h("a", { href: "#/help" }, "the Help centre"), " explains everything in detail. Press ", h("kbd", {}, "?"), " for keyboard shortcuts."));
+      step(3, "Submit for review", "Someone else checks it and approves it or returns it with a comment. Only approved images become training data."),
+      step(4, "Review other people's work", "Switch to Review at the top of the page and press Review next. Correct small mistakes, then approve or request changes. Nobody reviews their own submissions."),
+      step(5, "Export the dataset", "Download a ZIP ready for HydrideSegmentation or other training code, with full provenance.")),
+    h("p", { class: "small" }, "Everyone can annotate and review. Stuck? Every screen has ", h("span", { class: "help-tip inline" }, "?"), " buttons, and ", h("a", { href: "#/help" }, "the Help centre"), " explains everything in detail. Press ", h("kbd", {}, "?"), " for keyboard shortcuts."));
   close.addEventListener("click", () => {
     savePref("hideQuickStart", true);
     box.remove();
@@ -120,7 +149,7 @@ export function newProjectWizard() {
     const idx = rows.children.length + 1;
     const color = h("input", { type: "color", value: palette[(idx - 1) % palette.length], title: "Class colour" });
     const cname = h("input", { placeholder: `Class ${idx} name`, value: nameVal, required: true });
-    const cdesc = h("input", { placeholder: "What counts as this class? (shown to annotators)", value: desc });
+    const cdesc = h("input", { placeholder: "What counts as this class? (shown while annotating)", value: desc });
     const del = h("button", { class: "icon-btn", type: "button", title: "Remove class", "aria-label": "Remove class" }, icon("trash", 16));
     const row = h("div", { class: "class-row" }, h("span", { class: "class-index", title: "Pixel value in indexed masks" }, idx), color, cname, cdesc, del);
     del.addEventListener("click", () => {
@@ -140,7 +169,7 @@ export function newProjectWizard() {
     h("div", { class: "field" },
       h("span", { class: "field-label" }, "Classes ", helpTip("A class is one kind of feature you label. Each class gets a number: that number is the pixel value in 'indexed' masks, and 0 always means background (unlabelled). You can add classes later, but not renumber them.")),
       rows, addBtn),
-    field("Annotation guidelines", guidelines, "Shown to annotators and reviewers next to the image. Clear rules make labels consistent between people.", "Optional, but strongly recommended."));
+    field("Annotation guidelines", guidelines, "Shown next to every image while people annotate and review. Clear rules make labels consistent between people.", "Optional, but strongly recommended."));
   modal({
     title: "New project",
     body,

@@ -2,10 +2,10 @@
 // history, autosave and the editing lease).
 import { api, fetchBytes, putLabels, releaseLockBeacon } from "../api.js";
 import { Editor, TOOLS, isTyping } from "../editor/editor.js";
-import { go, setCrumbs, showShortcuts } from "../nav.js";
-import { app, canReview, savePref } from "../state.js";
+import { go, modeButton, setCrumbs, showShortcuts } from "../nav.js";
+import { app, inReview, savePref } from "../state.js";
 import {
-  STATUS_HELP, clear, confirmDialog, field, fmtDate, fmtPct, fmtRelative, h, helpTip, icon, modal, statusBadge, toast,
+  STATUS_HELP, STATUS_LABELS, clear, confirmDialog, field, fmtDate, fmtPct, fmtRelative, h, helpTip, icon, modal, statusBadge, toast,
 } from "../ui.js";
 import { startNext } from "./home.js";
 
@@ -112,12 +112,17 @@ class Workspace {
     return bytes;
   }
 
-  // Decide whether this user edits, reviews, or only looks.
+  // Decide whether this user edits, reviews, or only looks. The working mode decides which
+  // images are editable here, mirroring the rules the server enforces.
   async decideMode() {
     const img = this.image;
-    this.reviewMode = canReview() && img.status === "submitted";
+    const pending = (img.versions || []).find((v) => v.status === "submitted");
+    this.ownSubmission = Boolean(img.status === "submitted" && pending && pending.created_by === app.me.email);
+    const mayReview = !this.ownSubmission || Boolean(app.meta && app.meta.allow_self_approval);
+    this.reviewMode = inReview() && img.status === "submitted" && mayReview;
     this.readReason = null;
-    if (img.status === "submitted" && !this.reviewMode) this.readReason = "submitted";
+    if (img.status === "submitted" && !this.reviewMode) this.readReason = inReview() ? "own_submission" : "submitted";
+    else if (inReview() && img.status !== "submitted") this.readReason = "not_for_review";
     else if (img.status === "approved" && !this.reopenApproved) this.readReason = "approved";
     if (!this.readReason) {
       try {
@@ -177,10 +182,21 @@ class Workspace {
         this.changeCount !== this.savedCount ? " Your latest changes are still here; re-open to save them." : ""),
       h("button", { class: "btn btn-small", onclick: () => this.retryLock() }, "Re-open for editing"));
     } else if (this.readReason === "submitted") {
-      const mine = latest && latest.created_by === app.me.email;
-      add("banner-blue", icon("send", 16), h("span", {}, h("strong", {}, "Waiting for review."),
-        ` Submitted ${latest ? `by ${latest.created_by.split("@")[0]} ${fmtRelative(latest.created_at)}` : ""}. It is read-only until a reviewer decides.`),
-      mine ? h("button", { class: "btn btn-small", onclick: () => this.withdraw() }, "Withdraw to edit") : null);
+      const by = latest ? ` Submitted by ${latest.created_by === app.me.email ? "you" : latest.created_by.split("@")[0]} ${fmtRelative(latest.created_at)}.` : "";
+      add("banner-blue", icon("send", 16), h("span", {}, h("strong", {}, "Waiting for review."), by,
+        this.ownSubmission ? " It is read-only until someone else reviews it; you can take it back while it waits."
+          : " To review it, switch to Review mode."),
+      this.ownSubmission ? h("button", { class: "btn btn-small", onclick: () => this.withdraw() }, "Withdraw to edit") : modeButton("review"));
+    } else if (this.readReason === "own_submission") {
+      add("banner-purple", icon("review", 16), h("span", {}, h("strong", {}, "This is your own submission. "),
+        "Someone else reviews it, so it is view-only for you in Review mode. To change it, switch to Annotate mode and withdraw it."),
+      modeButton("annotate"),
+      h("button", { class: "btn btn-small", type: "button", onclick: () => startNext(this.project.id, "review", img.id) }, "Review next"));
+    } else if (this.readReason === "not_for_review") {
+      add("banner-purple", icon("review", 16), h("span", {}, h("strong", {}, "Review mode. "),
+        `This image is ${(STATUS_LABELS[img.status] || img.status).toLowerCase()}, not waiting for review, so it is view-only here. Switch to Annotate mode to edit it.`),
+      modeButton("annotate"),
+      h("button", { class: "btn btn-small", type: "button", onclick: () => startNext(this.project.id, "review", img.id) }, "Review next"));
     } else if (this.readReason === "approved") {
       const approved = img.versions.find((v) => v.status === "approved");
       add("banner-green", icon("check", 16), h("span", {}, h("strong", {}, "Approved"),
@@ -192,7 +208,7 @@ class Workspace {
         `Submitted by ${latest ? latest.created_by.split("@")[0] : "?"} ${latest ? fmtRelative(latest.created_at) : ""}`,
         latest && latest.note ? h("span", {}, " with the note: “", h("em", {}, latest.note), "”") : ".",
         " Check the labels against the guidelines. You may correct them; then approve, or request changes with a comment."),
-      helpTip("Tip: press H to hide the labels and compare with the image underneath, and O to see outlines only. If you correct labels, your corrected version is what gets approved; the annotator's submission stays in history."));
+      helpTip("Tip: press H to hide the labels and compare with the image underneath, and O to see outlines only. If you correct labels, your corrected version is what gets approved; the original submission stays in history."));
     } else if (img.status === "changes_requested") {
       const returned = img.versions.find((v) => v.status === "changes_requested");
       add("banner-amber", icon("flag", 16), h("span", {}, h("strong", {}, "Changes requested"),
@@ -262,11 +278,11 @@ class Workspace {
       const approve = h("button", { class: "btn btn-success" }, icon("check", 16), "Approve");
       approve.addEventListener("click", () => this.approve());
       actions.append(reject, approve,
-        helpTip("Approve: the labels become ground truth and will be exported. Request changes: the image goes back to the annotator with your comment. You cannot approve your own submission unless an administrator allows it."));
+        helpTip("Approve: the labels become ground truth and will be exported. Request changes: the image goes back to the person who submitted it, with your comment, to fix in Annotate mode. Nobody reviews their own submissions unless an administrator allows it."));
     } else if (this.editable && img.status !== "submitted") {
-      const submit = h("button", { class: "btn btn-primary", title: "Send to a reviewer" }, icon("send", 16), "Submit for review");
+      const submit = h("button", { class: "btn btn-primary", title: "Send it to be reviewed by someone else" }, icon("send", 16), "Submit for review");
       submit.addEventListener("click", () => this.submit());
-      actions.append(submit, helpTip("When you are satisfied with every label on this image, submit it. A reviewer then approves it or returns it with a comment. You can still withdraw it while it waits."));
+      actions.append(submit, helpTip("When you are satisfied with every label on this image, submit it. Someone else, working in Review mode, then approves it or returns it with a comment. You can still withdraw it while it waits."));
     }
     clear(this.top).append(
       h("a", { class: "icon-btn", href: `#/p/${this.project.id}`, title: "Back to the project", "aria-label": "Back to the project" }, icon("back")),
@@ -581,7 +597,7 @@ class Workspace {
       const item = h("div", { class: "version" },
         h("div", { class: "version-head" }, h("strong", {}, `v${v.number}`), h("span", { class: `badge vstatus-${v.status}` }, v.status.replace("_", " ")),
           h("span", { class: "muted small" }, fmtDate(v.created_at))),
-        h("div", { class: "small" }, v.kind === "reviewer_edit" ? "Corrected by " : "By ", v.created_by),
+        h("div", { class: "small" }, v.kind === "reviewer_edit" ? "Corrected in review by " : "By ", v.created_by),
         v.note ? h("div", { class: "small" }, "Note: ", h("em", {}, v.note)) : null,
         v.reviewed_by ? h("div", { class: "small" }, `${v.status === "approved" ? "Approved" : "Reviewed"} by ${v.reviewed_by}`, v.review_comment ? h("span", {}, ": “", h("em", {}, v.review_comment), "”") : null) : null);
       const acts = h("div", { class: "row small" });
@@ -602,7 +618,7 @@ class Workspace {
       img.working_updated_by ? [h("dt", {}, "Last saved"), h("dd", {}, `${img.working_updated_by.split("@")[0]}, ${fmtRelative(img.working_updated_at)}`)] : null,
       img.working_origin && img.working_origin !== "edited in browser" ? [h("dt", {}, "Origin"), h("dd", {}, img.working_origin)] : null,
       img.conversion_note ? [h("dt", {}, "Display"), h("dd", {}, img.conversion_note)] : null);
-    return this.section("Image & history", "Every submission is kept as an immutable version with its reviewer decision, so the history of the ground truth can always be traced.",
+    return this.section("Image & history", "Every submission is kept as an immutable version with its review decision, so the history of the ground truth can always be traced.",
       info, h("a", { href: `api/v1/images/${img.id}/original`, class: "small" }, "Download original file"), list);
   }
 
@@ -819,7 +835,7 @@ class Workspace {
     }
     const counts = this.editor.map.counts();
     const labelled = this.editor.map.data.length - counts[0];
-    const note = h("textarea", { rows: 3, placeholder: "Optional: anything the reviewer should know (unclear regions, doubts)" });
+    const note = h("textarea", { rows: 3, placeholder: "Optional: anything the person reviewing it should know (unclear regions, doubts)" });
     const summary = h("ul", { class: "compact small" }, this.classes.map((c) => h("li", {}, h("span", { class: "swatch", style: { background: c.color } }), ` ${c.name}: `,
       h("strong", {}, fmtPct(counts[c.index] / this.editor.map.data.length, 2)), ` (${counts[c.index].toLocaleString()} px)`)));
     modal({
@@ -827,7 +843,7 @@ class Workspace {
       body: h("div", { class: "stack" },
         labelled === 0 ? h("div", { class: "alert alert-warn" }, "No pixel is labelled. That is correct only if this image truly contains none of the classes; say so in the note.") : null,
         h("p", {}, "Labelled area on this image:"), summary,
-        h("label", { class: "field" }, h("span", { class: "field-label" }, "Note for the reviewer"), note),
+        h("label", { class: "field" }, h("span", { class: "field-label" }, "Note for the person who reviews it"), note),
         h("p", { class: "small muted" }, "After submitting, the image is read-only for you until it is reviewed. You can withdraw it while it waits.")),
       actions: [{ label: "Keep working" }, {
         label: "Submit",
@@ -853,11 +869,11 @@ class Workspace {
     if (!(await this.saveNow(false)) && this.hasUnsaved()) return toast("Save failed; nothing was approved.", "error");
     const pending = this.image.versions.find((v) => v.status === "submitted");
     const edited = this.savedCount > 0 || (pending && this.image.working_revision !== this.revision);
-    const comment = h("textarea", { rows: 2, placeholder: "Optional comment for the annotator" });
+    const comment = h("textarea", { rows: 2, placeholder: "Optional comment for the person who submitted it" });
     modal({
       title: "Approve as ground truth",
       body: h("div", { class: "stack" },
-        edited ? h("div", { class: "alert alert-info" }, "You corrected the labels. Your corrected version is approved as a new version; the annotator's submission stays in the history.")
+        edited ? h("div", { class: "alert alert-info" }, "You corrected the labels. Your corrected version is approved as a new version; the original submission stays in the history.")
           : h("p", {}, "The submitted labels become ground truth and are included in approved exports."),
         h("label", { class: "field" }, h("span", { class: "field-label" }, "Comment"), comment)),
       actions: [{ label: "Cancel" }, {
@@ -886,7 +902,7 @@ class Workspace {
     const comment = h("textarea", { rows: 4, placeholder: "What should be changed? Be specific, e.g. 'The platelet at the top right is missing its tip.'", required: true });
     modal({
       title: "Request changes",
-      body: h("div", { class: "stack" }, h("p", {}, "The image goes back to the annotator with your comment. They fix it and submit again."),
+      body: h("div", { class: "stack" }, h("p", {}, "The image goes back to the person who submitted it, with your comment. They fix it in Annotate mode and submit again."),
         h("label", { class: "field" }, h("span", { class: "field-label" }, "Comment (required)"), comment)),
       actions: [{ label: "Cancel" }, {
         label: "Send back",
@@ -901,7 +917,7 @@ class Workspace {
             this.haveLock = false;
             clearInterval(this.heartbeat);
             await api.del(`api/v1/images/${this.image.id}/lock`).catch(() => {});
-            toast("Returned to the annotator. Opening the next submission…", "success");
+            toast("Returned with your comment. Opening the next submission…", "success");
             this.afterDecision("review");
           } catch (err) {
             toast(err.message, "error");

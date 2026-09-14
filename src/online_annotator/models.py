@@ -20,12 +20,13 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
 
-ROLES = ("annotator", "reviewer", "admin")
+WORKING_MODES = ("annotate", "review")
 IMAGE_STATUSES = ("new", "in_progress", "submitted", "changes_requested", "approved")
 SPLITS = ("unassigned", "train", "val", "test")
 VERSION_STATUSES = ("submitted", "approved", "changes_requested", "withdrawn", "superseded")
@@ -49,25 +50,26 @@ def as_utc(value: datetime | None) -> datetime | None:
 
 
 class User(Base):
+    """A person with an office e-mail account.
+
+    Every active user can annotate *and* review. ``active_mode`` (see ``WORKING_MODES``) is only
+    what they are doing right now; it is kept per account so it survives signing out and moving
+    desks, and the server enforces it (``services/access.py``). ``is_admin`` is a privilege on
+    top of that and never depends on the mode.
+    """
+
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     full_name: Mapped[str] = mapped_column(String(255))
-    role: Mapped[str] = mapped_column(String(20), default="annotator")
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("0"))
+    active_mode: Mapped[str] = mapped_column(String(10), default="annotate", server_default="annotate")
     password_hash: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-
-    @property
-    def can_review(self) -> bool:
-        return self.role in ("reviewer", "admin")
-
-    @property
-    def is_admin(self) -> bool:
-        return self.role == "admin"
 
 
 class AuthSession(Base):

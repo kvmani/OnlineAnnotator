@@ -60,10 +60,11 @@ Inherited from platform governance §3.1–3.2 and pytex's cardinal rule.
 
 ### 3. Ordinary users first: the tool explains itself
 
-Most annotators are materials scientists, students or technicians, not annotation experts.
+Most users are materials scientists, students or technicians, not annotation experts. Every user
+both annotates and reviews, choosing a working mode (Annotate / Review) in the UI.
 
 - Every screen states what to do next; primary actions are obvious (**Annotate next**,
-  **Submit for review**, **Approve**, **Create export**).
+  **Review next**, **Submit for review**, **Approve**, **Create export**).
 - Every decision with scientific consequences (mask format, split, which annotations to
   export, class numbers, self-approval, protect mode, tool parameters) has an inline `(?)`
   explanation (`helpTip` in `ui.js`) in plain language.
@@ -79,7 +80,7 @@ Most annotators are materials scientists, students or technicians, not annotatio
 ### 4. Rules are enforced on the server
 
 The browser mirrors rules for convenience; the server is the only authority. Editing leases,
-workflow transitions, role checks, self-approval, revision checks and label validation live in
+workflow transitions, privilege and working-mode checks, self-approval, revision checks and label validation live in
 `services/` and are unit-tested. A UI-only guard is a bug.
 
 ### 5. Intranet self-sufficiency
@@ -129,11 +130,13 @@ src/online_annotator/
   _version.py      single release identity (read by UI, health, manifests, packaging)
   config.py        defaults < YAML < ONLINE_ANNOTATOR_* env vars
   models.py        SQLAlchemy models (SQLite WAL by default)
-  services/        ALL behaviour: auth, workflow (leases + state machine), labels, imaging,
+  db.py            engine, schema version and numbered migrations (db.MIGRATIONS)
+  services/        ALL behaviour: auth, access (privilege + working mode), workflow (leases +
+                   state machine), labels, imaging,
                    projects, exports, audit, demo. Pure, unit-tested, no HTTP knowledge.
   api/             thin FastAPI routers: validate, call a service, serialise.
   app.py           factory: middleware (CSRF guard, headers, caching), routers, static SPA.
-  cli.py           serve, create-user, reset-password, seed-demo.
+  cli.py           serve, create-user, reset-password, seed-demo, db-status, migrate.
   web/             vanilla ES-module SPA, no build step:
     static/js/editor/labelmap.js   exact label operations + undo history (Node-tested)
     static/js/editor/editor.js     canvas view, rendering and tool interaction
@@ -155,8 +158,11 @@ entry, documentation update, and a note in the ledger.
 - Export manifest schema `online-annotator.export/1` and layouts in `docs/EXPORT_FORMAT.md`.
 - HydrideSegmentation pairing: `<stem>.png` + `<stem>_mask.png`, binary 0/255 or red
   (R≥200, G≤60, B≤60); image stems never contain `_mask`.
-- Database schema (`db.SCHEMA_VERSION`): migrations must be additive or scripted, and a newer
-  schema must refuse to start on an older release.
+- Database schema (`db.SCHEMA_VERSION`, `db.MIGRATIONS`): every change is a new numbered, idempotent
+  migration step (backup first, then upgrade), tested against databases written by earlier
+  releases in `tests/test_migrations.py`; a newer schema must refuse to start on an older release.
+- Account model: `is_admin` privilege and per-account `active_mode`; there are no annotator or
+  reviewer roles, and nobody reviews their own submission unless `allow_self_approval`.
 
 ## Testing (proportional, per platform governance §9)
 
@@ -189,7 +195,9 @@ entry, documentation update, and a note in the ledger.
 3. Commit, tag `vX.Y.Z`, push `main` and the tag.
 4. Bump the `annotator` component `ref` in `ml_server_deploy/manifest.yml` and follow that
    repository's release procedure. Rollback = previous suite release (data directory is shared
-   and never touched by upgrades; schema changes must stay backward-readable for one release).
+   and never touched by upgrades). A schema bump makes the previous release refuse the upgraded
+   database, so say in the suite RUNBOOK that rolling back past it means restoring the copy the
+   upgrade saved in `<data>/backups/`.
 
 ## Anti-goals
 

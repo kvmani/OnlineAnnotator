@@ -9,8 +9,8 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from ..config import Settings
-from ..models import IMAGE_STATUSES, Image, LabelClass, Project, User
-from . import audit, imaging, workflow
+from ..models import IMAGE_STATUSES, Image, LabelClass, Project, User, as_utc
+from . import access, audit, imaging, workflow
 
 HEX_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 DEFAULT_COLORS = ["#FF0000", "#2F80ED", "#27AE60", "#F2C94C", "#9B51E0", "#F2994A", "#56CCF2", "#EB5757"]
@@ -87,26 +87,29 @@ def delete_image(db: Session, settings: Settings, image: Image, user: User) -> N
                  project_id=project_id)
 
 
-def next_image(db: Session, project: Project, user: User, after_id: int | None = None,
-               mode: str = "annotate") -> Image | None:
-    """The image a user should open next.
+def review_queue(settings: Settings, project: Project, user: User) -> list[Image]:
+    """Submissions this user may review, oldest submission first.
 
-    ``annotate``: my returned work, then my work in progress, then new images assigned
-    to me or to nobody. ``review``: submissions not made by me (oldest first).
-    Images someone else is editing are skipped.
+    Their own submissions are left out unless ``allow_self_approval`` is set, so nobody is
+    ever handed their own work as something to approve.
+    """
+    ranked = []
+    for img in project.images:
+        pending = workflow.latest(img, "submitted") if img.status == "submitted" else None
+        if pending is not None and access.may_review(settings, user, pending.created_by):
+            ranked.append((as_utc(pending.created_at), img.id, img))
+    return [img for _, _, img in sorted(ranked, key=lambda t: (t[0], t[1]))]
+
+
+def annotate_queue(project: Project, user: User, after_id: int | None = None) -> list[Image]:
+    """Images needing annotation, in the order this user should get them.
+
+    My returned work, then my work in progress, then new images assigned to me, new
+    unassigned images, and finally returned work nobody is assigned to.
     """
     images = sorted(project.images, key=lambda i: i.id)
     if after_id is not None:
         images = [i for i in images if i.id > after_id] + [i for i in images if i.id <= after_id]
-
-    def free(img: Image) -> bool:
-        state = workflow.lock_state(db, img, user)
-        return not state.locked or state.by_me
-
-    if mode == "review":
-        ranked = [i for i in images if i.status == "submitted" and free(i)]
-        mine_last = sorted(ranked, key=lambda i: (workflow.latest(i, "submitted").created_by == user.email))
-        return mine_last[0] if mine_last else None
 
     def mine(img: Image) -> bool:
         return img.assigned_to == user.email or img.working_updated_by == user.email
@@ -118,11 +121,33 @@ def next_image(db: Session, project: Project, user: User, after_id: int | None =
         [i for i in images if i.status == "new" and not i.assigned_to],
         [i for i in images if i.status == "changes_requested" and not i.assigned_to],
     ]
-    for tier in tiers:
-        for img in tier:
-            if free(img):
-                return img
-    return None
+    return [img for tier in tiers for img in tier]
+
+
+def queue_counts(settings: Settings, project: Project, user: User) -> dict[str, int]:
+    """How much work waits for this user in each mode (edit leases are not considered)."""
+    own_pending = 0
+    for img in project.images:
+        pending = workflow.latest(img, "submitted") if img.status == "submitted" else None
+        if pending is not None and pending.created_by == user.email:
+            own_pending += 1
+    return {"annotate": len(annotate_queue(project, user)), "review": len(review_queue(settings, project, user)),
+            "own_pending": own_pending}
+
+
+def next_image(db: Session, settings: Settings, project: Project, user: User, after_id: int | None = None,
+               mode: str = "annotate") -> Image | None:
+    """The image a user should open next in ``mode``; images someone else is editing are skipped."""
+
+    def free(img: Image) -> bool:
+        state = workflow.lock_state(db, img, user)
+        return not state.locked or state.by_me
+
+    if mode == access.REVIEW:
+        candidates = [i for i in review_queue(settings, project, user) if i.id != after_id]
+    else:
+        candidates = annotate_queue(project, user, after_id)
+    return next((img for img in candidates if free(img)), None)
 
 
 def add_class(db: Session, project: Project, name: str, color: str | None, description: str,

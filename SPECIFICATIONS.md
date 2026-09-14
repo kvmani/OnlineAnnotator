@@ -1,6 +1,6 @@
 # SPECIFICATIONS — Online Annotator
 
-Version 1.0 of the product specification. Behaviour described here is implemented and tested;
+Version 2.0 of the product specification. Behaviour described here is implemented and tested;
 changes follow the contract rules in `AGENTS.md`.
 
 ## 1. Purpose and scope
@@ -10,7 +10,8 @@ semantic-segmentation ground truth** for microstructure images (optical, SEM, TE
 
 In scope:
 - pixel-exact labelling of one or more classes per project, with assisted tools;
-- a two-person review workflow producing immutable, approved versions;
+- a two-person review workflow producing immutable, approved versions, in which every user
+  both annotates and reviews and nobody reviews their own work;
 - multi-user operation with exclusive editing leases;
 - import of an existing mask — from another segmentation tool, an in-house script or a model
   prediction — as the starting point for correction, either in bulk or for one image from the
@@ -20,20 +21,36 @@ In scope:
   provenance manifest;
 - self-explanatory UI with inline help and an in-app Help centre.
 
-Out of scope (v1): instance segmentation IDs, 3-D stacks, video, bounding-box detection
+Out of scope (v2): instance segmentation IDs, 3-D stacks, video, bounding-box detection
 labelling, model training or inference inside this tool, external identity providers.
 
-## 2. Users and roles
+## 2. Users, privilege and working mode
 
-| Role | Can |
+There are no annotator or reviewer roles. Two independent things describe a user:
+
+**Privilege** (`is_admin`, set by an administrator):
+
+| Account | Can, in either working mode |
 | --- | --- |
-| annotator | view projects; upload images; import pre-annotation masks; annotate (with a lease); submit; withdraw own submission |
-| reviewer | everything an annotator can, plus approve / request changes, correct during review, set splits and assignments, export |
-| admin | everything, plus create/edit/archive projects, manage classes and guidelines, manage users, delete images, break locks |
+| user | view projects; upload images; set splits and assignments; export datasets; everything in §2's working modes |
+| administrator | everything a user can, plus create/edit/archive projects, manage classes and guidelines, manage accounts (including granting and removing administrator), delete images, break another person's lease |
+
+**Working mode** (`active_mode`, chosen by each user for themselves from the top bar, stored
+per account on the server, `annotate` for new accounts):
+
+| Mode | The user does |
+| --- | --- |
+| Annotate | edit images that are not waiting for review (with a lease); import masks; submit; withdraw their own submission |
+| Review | correct a submission from someone else (with a lease); approve it or request changes |
+
+The server enforces the working mode (§4); switching mode never adds or removes a privilege,
+and administrators annotate and review under the same rules as everyone else. An
+administrator can see each person's current mode but cannot change it.
 
 Identity is the office e-mail address. Accounts are created by an administrator (temporary
 password, must be changed at first sign-in) or, only when `self_registration` is enabled
-together with an SMTP relay and optionally `allowed_email_domains`, by e-mail code.
+together with an SMTP relay and optionally `allowed_email_domains`, by e-mail code; such
+accounts are ordinary users.
 
 ## 3. Core concepts
 
@@ -46,9 +63,10 @@ together with an SMTP relay and optionally `allowed_email_domains`, by e-mail co
 - **Working copy**: the current label map of an image (`working_revision` increments on every
   save).
 - **Version**: an immutable snapshot (PNG + label SHA-256 + class pixel counts), created on
-  submission or on approval of reviewer corrections.
+  submission or on approval of review corrections (kind `reviewer_edit`).
 - **Lease (lock)**: exclusive right to edit one image, `lock_lease_seconds` long (default 300 s),
   renewed by the browser every lease/3 while the image is open, released on leave.
+- **Working mode**: see §2.
 
 ## 4. Workflow
 
@@ -63,72 +81,95 @@ new ──save──▶ in_progress ──submit──▶ submitted ──approv
 Server-enforced rules:
 1. Saving labels requires the caller's live lease and the `base_revision` the edit started
    from; otherwise `423` (lease) or `409` (stale revision) with an actionable message.
-2. Only reviewers edit a `submitted` image; annotators must withdraw first.
+2. An image that is not `submitted` is edited, imported into and submitted only in **Annotate**
+   mode. A `submitted` image is edited only in **Review** mode, as a review correction, and
+   never by its submitter; the submitter withdraws it instead. A refusal because of the mode
+   is `409` and names the mode to switch to.
 3. Submitting requires at least one save; it releases the submitter's lease.
-4. `request_changes` requires a comment.
-5. Nobody approves a submission they made unless `allow_self_approval: true`.
-6. If the reviewer changed the working copy, approval snapshots the corrected labels as a new
-   `reviewer_edit` version (approved) and marks the submission `superseded`.
+4. Approving or requesting changes requires **Review** mode; `request_changes` requires a
+   comment.
+5. Nobody approves, returns or corrects a submission they made unless
+   `allow_self_approval: true` (`403` otherwise).
+6. If the working copy was corrected during review, approval snapshots the corrected labels as a
+   new `reviewer_edit` version (approved) and marks the submission `superseded`.
 7. Editing an approved image returns it to `in_progress`; its approved version stays in history
    and remains the one exported until a newer one is approved.
-8. Restoring a version copies it into the working copy (history unchanged).
+8. Restoring a version copies it into the working copy (history unchanged; rule 2 applies).
+9. Only the submitter (in either mode) or an administrator withdraws a submission.
 
 "Annotate next" order: my returned work → my work in progress → new images assigned to me →
 new unassigned images → returned unassigned images, skipping images leased by others.
-"Review next": oldest submissions by others first.
+"Review next": submissions by other people, oldest submission first, skipping images leased by
+others. The user's own submissions are never offered (unless `allow_self_approval`), and the
+counts shown to a user (`queue`) exclude them in the same way.
 
 ## 5. Browser application
 
 - Hash-routed single page, vanilla ES modules, no external assets; relative URLs so it also
   runs behind a path prefix.
-- **Projects dashboard** with a dismissible "How it works" quick start.
-- **Project page**: status summary with help, Images (filters, search, lock indicators,
-  reviewer bulk split/assign, upload with drag-and-drop and progress, mask import), Classes &
-  guidelines, Export dataset (reviewers), Activity, Settings (admin).
+- **Top bar**: an always-visible **Annotate / Review** switch (radio group) showing the
+  current mode, with a mode-coloured edge (blue / purple). Switching saves and leaves the
+  current view (releasing any lease), stores the mode on the server, and redraws the same page
+  in the new mode without signing out. A tab that becomes visible again follows a mode changed
+  elsewhere. Administrators also see **Users**.
+- **Projects dashboard** with a dismissible "How it works" quick start and a mode note
+  (what waits for me in this mode, a button to the other mode when that is where the work is).
+  Cards lead with **Annotate next** or **Review next (n)** according to the mode.
+- **Project page**: the same mode-led header and note, status summary with help, Images
+  (filters — Review mode starts on "For me to review" — search, lock indicators, "yours" tag
+  on own pending submissions, bulk split/assign, upload with drag-and-drop and progress, mask
+  import in Annotate mode), Classes & guidelines, Export dataset, Activity, Settings (admin).
 - **Workspace**: tools Pan (V), Brush (B), Eraser (E), Polygon (P), Lasso (L), Magic wand (W),
   Box threshold (T), Fill (G); Shift erases with any tool; Alt+click picks a class; keys 1–9
   select classes; `[`/`]` brush size; undo/redo (patch-based, ≥100 steps); zoom at cursor,
   Space/middle/right-drag pan; fit (F); show/hide labels (H); outlines (O); brightness,
   contrast, invert (display only); protect-other-classes mode; speck removal and hole filling;
-  live per-class coverage; hint bar for the active tool; banners for every lease and review
-  state; autosave 2.5 s after the last edit, manual save Ctrl+S, visible save state; version
-  history with restore and mask download; guidelines panel; collapsible side panel.
+  live per-class coverage; hint bar for the active tool; banners for every lease, review and
+  mode state (waiting for review with Withdraw or "Switch to Review mode"; own submission in
+  Review mode; image not waiting for review in Review mode; changes requested; approved);
+  autosave 2.5 s after the last edit, manual save Ctrl+S, visible save state; version history
+  with restore and mask download; guidelines panel; collapsible side panel.
+- **Users** (administrators): Administrator checkbox per account (not for oneself), current
+  working mode shown read-only, status, reset password, disable.
 - **Magic wand**: classifies the seed as dark/bright against its 31×31 neighbourhood mean and
   grows 4-connected over pixels at least as dark (bright) as the seed plus `tolerance`; refuses
   regions over 25 % of the image.
 - **Box threshold**: Otsu threshold of the box's grey levels, dark/bright choice, speck
   filter, live preview, apply/cancel.
-- **Help**: `(?)` popovers at decisions, Help centre (`#/help`, also `/help`), keyboard sheet (`?`).
+- **Help**: `(?)` popovers at decisions, Help centre (`#/help`, also `/help`) including
+  "Annotate and Review modes", keyboard sheet (`?`).
 
 ## 6. HTTP API (`/api/v1`, JSON unless stated)
 
 All mutating requests need header `X-Requested-With: OnlineAnnotator`; the session is an
-HttpOnly cookie (or `Authorization: Bearer <token>`).
+HttpOnly cookie (or `Authorization: Bearer <token>`). "Mode" is the working mode the server
+requires (§4).
 
-| Method & path | Purpose | Role |
+| Method & path | Purpose | Who |
 | --- | --- | --- |
 | GET `/api/health`, `/health` | `{"status":"ok","tool_id":"online-annotator","version"}` | public |
 | GET `/api/health/deep` | database and storage check | public |
-| GET `/meta` | version, limits, feature flags, portal/feedback URLs | public |
-| GET `/auth/options`; POST `/auth/login`, `/auth/logout`, `/auth/change-password`; GET `/auth/me` | sessions | — |
+| GET `/meta` | version, limits, feature flags (`allow_self_approval`), portal/feedback URLs | public |
+| GET `/auth/options`; POST `/auth/login`, `/auth/logout`, `/auth/change-password`; GET `/auth/me` | sessions; user objects carry `is_admin` and `active_mode` | — |
+| PUT `/auth/mode` `{"mode": "annotate" \| "review"}` | switch the signed-in user's working mode | any user |
 | POST `/auth/otp/request`, `/auth/otp/verify` | e-mail code sign-in (only with SMTP) | — |
-| GET/POST `/users`; PATCH `/users/{id}`; POST `/users/{id}/reset-password` | accounts | admin (GET: any) |
-| GET/POST `/projects`; GET/PATCH `/projects/{id}` | projects | POST/PATCH admin |
+| GET/POST `/users`; PATCH `/users/{id}` (`full_name`, `is_admin`, `is_active`); POST `/users/{id}/reset-password` | accounts | admin (GET: any) |
+| GET/POST `/projects`; GET/PATCH `/projects/{id}` | projects; GET adds the caller's `queue` `{annotate, review, own_pending}` | POST/PATCH admin |
 | POST/PATCH/DELETE `/projects/{id}/classes[/{cid}]` | classes (delete only if unused) | admin |
 | GET/POST `/projects/{id}/images` | list / multipart upload (`files`, `split`) | any |
-| POST `/projects/{id}/images/bulk` | split / assignment for many images | reviewer |
-| GET `/projects/{id}/next?mode=annotate|review&after=` | next image id | any / reviewer |
-| POST `/projects/{id}/masks` | import pre-annotation masks in bulk (`files`, `import_class`, `source_tool`, `remarks`) | any |
-| POST `/images/{id}/mask-import` | import one existing mask as this image's working copy (`file`, `import_class`, `source_tool`, `remarks`) | any |
+| POST `/projects/{id}/images/bulk` | split / assignment for many images | any |
+| GET `/projects/{id}/next?mode=annotate\|review&after=` | next image id; `mode` defaults to the caller's working mode | any |
+| POST `/projects/{id}/masks` | import pre-annotation masks in bulk (`files`, `import_class`, `source_tool`, `remarks`) | any, Annotate mode |
+| POST `/images/{id}/mask-import` | import one existing mask as this image's working copy | any, Annotate mode |
 | PATCH `/images/{id}/mask-source` | edit the tool name and remarks recorded for an imported mask | any |
 | GET `/projects/{id}/activity`, `/projects/{id}/summary` | audit trail; approved class fractions | any |
-| POST `/projects/{id}/exports/preview`, `/projects/{id}/exports`; GET `/projects/{id}/exports`; GET `/exports/{id}/download` | datasets | reviewer (list/download: any) |
+| POST `/projects/{id}/exports/preview`, `/projects/{id}/exports`; GET `/projects/{id}/exports`; GET `/exports/{id}/download` | datasets | any |
 | GET/PATCH/DELETE `/images/{id}` | detail incl. versions and lease; notes/split/assignee; delete (admin) | any |
-| GET `/images/{id}/display|original|thumb` | pixels | any |
+| GET `/images/{id}/display\|original\|thumb` | pixels | any |
 | GET `/images/{id}/grey` | raw 8-bit luminance, gzip (assisted tools) | any |
 | GET `/images/{id}/labels[?version=n]` | raw `uint8` labels, gzip, header `X-Revision` | any |
-| PUT `/images/{id}/labels?base_revision=r` | save raw labels (optional `Content-Encoding: gzip`) | lease holder |
-| GET `/images/{id}/mask.png?style=colour|binary|indexed&target=&version=` | download | any |
+| PUT `/images/{id}/labels?base_revision=r` | save raw labels (optional `Content-Encoding: gzip`) | lease holder; mode per §4 rule 2 |
+| GET `/images/{id}/mask.png?style=colour\|binary\|indexed&target=&version=` | download | any |
 | POST/DELETE `/images/{id}/lock`; POST `/images/{id}/lock/release` (beacon) | leases | any / admin `force` |
 | POST `/images/{id}/submit`, `/withdraw`, `/review`, `/restore/{n}` | workflow | see §4 |
 
@@ -147,14 +188,14 @@ images ordered by SHA-256(`seed:image-sha256`) and cut by the ratios.
 
 | Area | Requirement |
 | --- | --- |
-| Deployment | single process (Uvicorn), SQLite WAL, data directory outside the release; Python ≥ 3.10; no internet |
+| Deployment | single process (Uvicorn), SQLite WAL, data directory outside the release; Python ≥ 3.10, SQLite ≥ 3.35; no internet |
 | Browsers | current Chrome, Edge, Firefox (pointer events, `CompressionStream` optional) |
 | Limits | upload ≤ `max_upload_mb` (200) per file, ≤ `max_image_megapixels` (80); images ≥ 8×8 |
 | Concurrency | tens of simultaneous users; SQLite busy timeout 30 s; leases prevent edit collisions |
 | Durability | atomic PNG writes (temp + rename); audit in DB and `audit/audit.jsonl` |
 | Security | see AGENTS.md rule 8; login rate limit (10 failures / 15 min per e-mail + client) |
-| Privacy | only e-mail, name and activity are stored; nothing leaves the server |
-| Accessibility | keyboard shortcuts for all tools; every button has an accessible name (E2E-tested); visible focus |
+| Privacy | only e-mail, name, working mode and activity are stored; nothing leaves the server |
+| Accessibility | keyboard shortcuts for all tools; every button has an accessible name (E2E-tested); the mode switch is a labelled radio group; visible focus |
 
 ## 9. Configuration
 
@@ -162,3 +203,19 @@ images ordered by SHA-256(`seed:image-sha256`) and cut by the ratios.
 `ONLINE_ANNOTATOR_CONFIG`) < `ONLINE_ANNOTATOR_<KEY>` environment variables (nested keys with
 `__`). First administrator: `ONLINE_ANNOTATOR_ADMIN_EMAIL` / `ONLINE_ANNOTATOR_ADMIN_PASSWORD`
 or a generated one-time password written to `<data>/initial_admin_password.txt`.
+`allow_self_approval` (default `false`) lets people review their own submissions.
+
+## 10. Database schema and upgrades
+
+- The stored schema version is SQLite's `PRAGMA user_version`; this release writes schema **3**
+  (`db.SCHEMA_VERSION`).
+- `db.MIGRATIONS` holds one numbered, idempotent step per version after 1: 2 = mask provenance
+  (1.1.0), 3 = working modes (2.0.0: `users.role` → `is_admin` + `active_mode`; former
+  administrators stay administrators, former reviewers start in Review mode).
+- At every start (and with `online-annotator migrate`) a fresh database is created at the
+  current version; an older one is first copied to `<data>/backups/<db>.schema<N>.<UTC>.sqlite3`
+  with SQLite's backup API, then upgraded one step at a time, the version stamped after each
+  step; a newer one is refused. `online-annotator db-status` reports the stored version and the
+  pending steps without changing anything (exit 0 current, 1 upgrade pending, 2 newer).
+- Tests upgrade real databases written by v1.0.1 (schema 1) and v1.1.1 (schema 2) and prove the
+  result has exactly the shape of a fresh database.

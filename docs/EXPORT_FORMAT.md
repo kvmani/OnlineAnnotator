@@ -1,6 +1,6 @@
 # Export format — `online-annotator.export/1`
 
-An export is one ZIP file. It is created by a reviewer on the project's **Export dataset** tab
+An export is one ZIP file. It can be created by any user, in either working mode, on the project's **Export dataset** tab
 (or `POST /api/v1/projects/{id}/exports`) and recorded in the export history with its SHA-256.
 
 ## Selection
@@ -44,7 +44,7 @@ palette …) is exported as the 8-bit PNG display copy, and `conversion_note` sa
 
 ## Splits
 
-- `split_mode: assigned` — the split stored on each image (set by reviewers on the Images tab or
+- `split_mode: assigned` — the split stored on each image (set by selecting images on the Images tab or
   at upload). Images still `unassigned` go to an `unassigned/` folder and the preview warns.
 - `split_mode: auto` — deterministic: images are ordered by `SHA-256("<seed>:<image sha256>")`
   and the first `round(n·train/total)` go to train, the next `round(n·val/total)` to val, the rest
@@ -85,7 +85,7 @@ One `.txt` per image, one line per outer contour: `<class index − 1> x1 y1 x2 
   "tool": {"id": "online-annotator", "version": "1.0.0"},
   "project": {"id": 1, "name": "…", "description": "…"},
   "created_at": "2026-09-11T17:35:15+00:00",
-  "created_by": "reviewer@lab.example",
+  "created_by": "riya@lab.example",
   "options": {"layout": "hydride_pairs", "mask_style": "binary", "target_class": 1, "include": "approved",
               "split_mode": "assigned", "train": 0.8, "val": 0.1, "test": 0.1, "seed": 42,
               "include_coco": true, "include_yolo": false, "extra": {}},
@@ -104,9 +104,9 @@ One `.txt` per image, one line per outer contour: `<class index − 1> x1 y1 x2 
     "mask_source": "imported", "mask_source_tool": "HydrideSegmentation v2.3",
     "mask_source_file": "sample_01_mask.png",
     "mask_source_remarks": "Model run of 2026-09-10; misses faint tips near grain boundaries.",
-    "annotated_by": "reviewer@lab.example", "annotated_at": "…+00:00",
-    "contributors": ["annotator@lab.example", "reviewer@lab.example"],
-    "approved_by": "reviewer@lab.example", "approved_at": "…+00:00",
+    "annotated_by": "riya@lab.example", "annotated_at": "…+00:00",
+    "contributors": ["arun@lab.example", "riya@lab.example"],
+    "approved_by": "riya@lab.example", "approved_at": "…+00:00",
     "class_pixels": {"1": 1726, "2": 150}, "class_fractions": {"1": 0.005618, "2": 0.000488}
   }]
 }
@@ -114,7 +114,7 @@ One `.txt` per image, one line per outer contour: `<class index − 1> x1 y1 x2 
 
 `mask_source` says where the ground truth started: `"manual"` for labels drawn from scratch in
 Online Annotator, `"imported"` when an externally produced mask (another segmentation tool, an
-in-house script, a model prediction) was loaded and then corrected by an annotator.
+in-house script, a model prediction) was loaded and then corrected by hand.
 `mask_source_tool`, `mask_source_file` and `mask_source_remarks` are what the importing user
 recorded about it; all three are empty strings for `"manual"`. The value is frozen when the
 version is created and never changes afterwards, and hand-correcting an imported mask does not
@@ -135,6 +135,11 @@ mask_name_patterns: ["{stem}_mask.png"]
 ```
 
 ## Compatibility promise
+
+`version_kind` is `submission` for labels exactly as submitted, or `reviewer_edit` when the person
+reviewing corrected the labels before approving them. The stored value names the kind of edit,
+not a role: since 2.0.0 every user can both annotate and review (never their own submission), and
+`contributors` lists everyone whose labels are in the exported version.
 
 Additive fields may appear in a minor release. Renaming or removing a field, changing a layout
 or an encoding requires `schema` → `online-annotator.export/2`, a major version bump and a
