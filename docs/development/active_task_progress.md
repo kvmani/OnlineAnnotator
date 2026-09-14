@@ -299,9 +299,20 @@ other's work), update README/specs/architecture/help, release, tag, and roll the
   resubmission, own submission, remembered mode, mode switch with unsaved work, admin)
 - [x] 5. Docs: README, SPECIFICATIONS (v2.0, §10 schema), ARCHITECTURE, DEPLOYMENT, EXPORT_FORMAT,
   AGENTS.md, config.example.yml, CHANGELOG 2.0.0, `_version.py` 2.0.0
-- [ ] 6. Full verification, release 2.0.0, tag, push, CI green
-- [ ] 7. ml_server_deploy: annotator ref v2.0.0, suite 1.10.0, RUNBOOK/manifest notes (edited,
-  unit tests 72 passed, hygiene clean, manifest validates), commit, tag, release
+- [x] 6. Full verification, release 2.0.0 (commit 044b502, tag v2.0.0), pushed; GitHub CI green
+  on both `main` (run 34817363159) and the tag (run 34817365481)
+- [x] 7. ml_server_deploy aea8c34: annotator ref v2.0.0 (resolves to 044b502), suite 1.10.0,
+  RUNBOOK rollback/accounts notes; tag v1.10.0; release build green (run 34817706371), archive
+  published: https://github.com/kvmani/ml_server_deploy/releases/tag/v1.10.0
+
+## Outcome — GOAL COMPLETE (2026-09-14)
+
+- OnlineAnnotator 2.0.0 on `main`, tag `v2.0.0`, CI green.
+- Suite 1.10.0: download `ml-server-suite-v1.10.0.tar.gz` + `.sha256` and run `./update.sh` on
+  the office server. The annotator backs up and upgrades its database to schema 3 on first start;
+  a fresh install simply creates schema 3. Rollback past 1.10.0: RUNBOOK "Rollback".
+- ml_server (portal) unchanged: its help for this tool already says "a second person approves".
+- Follow-ups (not blocking): none new.
 
 ## Defects found while testing (fixed)
 
