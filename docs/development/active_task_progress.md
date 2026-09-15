@@ -437,6 +437,12 @@ User asked to push the HydrideSegmentation commit and prepare a suite release.
   (manifest, hygiene, shell syntax, unit tests; no ShellCheck/actionlint downloads, no rehearsal
   job); its release workflow drops the duplicate lint, the second reproducibility build (covered by
   a unit test) and the fixture rehearsal (run locally in WSL).
+- Released (2026-09-15): OnlineAnnotator `e4352a2` tag `v2.1.0` (CI green on `main` and tag);
+  HydrideSegmentation tag `v1.1.0` -> `b7f7886`; ml_server_deploy `507991f` (CI green) tag
+  `v1.12.0`, release workflow green (run 34996524891), published
+  https://github.com/kvmani/ml_server_deploy/releases/tag/v1.12.0 with
+  `ml-server-suite-v1.12.0.tar.gz` (64.9 MB) + `.sha256`
+  (`e29068c7779a27dfff3f4d7d75f3dad95d4670eca2c6a07b1c12b6e941fb6a43`).
 - Rollout: download `ml-server-suite-v1.12.0.tar.gz` + `.sha256`, `./update.sh`. The annotator
   backs up and upgrades its database to schema 4 on first start. Rolling back past 1.12.0
   needs that copy restored (RUNBOOK "Rollback").
