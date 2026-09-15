@@ -335,3 +335,119 @@ other's work), update README/specs/architecture/help, release, tag, and roll the
 Note: this session overwrote the untracked, git-ignored `.claude/launch.json` (it held an
 `annotator-demo` preview entry on port 5071 from the 2026-09-11 session) without reading it
 first; it was re-created with an equivalent entry.
+
+---
+
+## Goal (set 2026-09-15): mask interoperability with HydrideSegmentation
+
+Users upload the mask they already have; the system says what it detected, how it will be
+interpreted and which class values will be stored. Common cases import automatically; ambiguous
+ones ask. Semantic class IDs are kept separate from display pixel values; nothing is resized.
+
+### Baseline (before any change)
+
+- OnlineAnnotator `python -m pytest`: 96 passed.
+- HydrideSegmentation (`.venv`, web/report/API tests): 73 passed, 1 failed **pre-existing**:
+  `test_workspace_places_run_button_near_input_and_exposes_split_zoom_and_version` expects
+  "v1.0.0" but the uncommitted local 1.0.1 version bump (not ours) renders "v1.0.1".
+- HydrideSegmentation working tree carries someone's uncommitted 1.0.1 release work
+  (CHANGELOG, README, version files, pptx, book chapter files). We never stage those files.
+
+### Decisions
+
+1. **One analysis result.** `labels.analyze_mask_file()` returns `MaskAnalysis` (detected
+   encoding, file format/mode/dtype, observed values/colours, mapping, target class, threshold,
+   invert, warnings, requires_confirmation, ok/error, final class pixels). The same object feeds
+   the preview endpoints, the import, the audit entry, stored provenance and the tests.
+   It lives in `services/labels.py` because that module owns all label decoding (AGENTS rule 1).
+2. **Auto-detect order:** (1) values all valid project class IDs -> preserved exactly;
+   (2) {0,1} -> binary; (3) {0,255} -> binary display, foreground -> chosen class;
+   (4) other two-value zero-background ({0,128}, {0,7}) -> binary-like, **needs confirmation**
+   (mirrors HydrideSegmentation, where `two_value_zero_background` is an explicit opt-in, and a
+   stray value may be a class ID from another project); (5) exact project colours; (6) red-on-black
+   (R>=200, G<=60, B<=60, everything else near-black); (7) palette PNG: indices are read first
+   and used when they are valid class IDs, otherwise the palette colours are interpreted;
+   (8) multi-level grey -> refused in auto, explicit threshold mode required.
+3. **Modes:** auto | indexed | binary | threshold | colour, plus `invert` for binary/threshold.
+4. **Refusals are actionable:** every error names what was found and the next step.
+5. **Provenance:** new JSON column `mask_import_details` on images and versions (schema 4,
+   additive migration), frozen into versions and written to the export manifest as
+   `mask_import`. Audit entries carry the same dict.
+6. **HydrideSegmentation:** commits stay local (repository owned by Pushpalathadevi, dirty tree);
+   pushing is left to the user.
+
+### Plan / status
+
+- [x] 1. `labels.py` analysis engine (`analyze_mask_file`, `MaskAnalysis`, `MaskClass`) replacing
+  `interpret_mask_image`/`decode_mask_file`; `tests/test_mask_analysis.py` (34 tests)
+- [x] 2. `services/mask_import.py` (single + bulk share `import_file`; batch preview/import; mask name
+  suffixes `_mask_labels`, `_mask_preview`, `_mask`); `POST .../mask-import/analyze` and
+  `.../masks/analyze`; `mode`/`threshold`/`invert`/`confirm` on both imports (`409` until confirmed);
+  migration 4 `mask_import_details` on images + versions (frozen, restored, remarks kept in sync);
+  `mask_import` in image/version JSON, audit entries and export manifest; `tests/test_mask_import.py`
+  +14 tests (analyze, confirmation, threshold, provenance everywhere, single-vs-bulk parity x6,
+  bulk confirm, HydrideSegmentation names)
+- [x] 3. UI: `views/maskimport.js` shared by both dialogs (reading choice, live preview, suggested
+  reading button, confirmation box, per-file batch list); "Read as" in Mask source; Help centre
+  "How a mask file is read"; SPECIFICATIONS, EXPORT_FORMAT, AGENTS service map, CHANGELOG
+  (Unreleased); Playwright mask journey extended (gradient refused -> threshold -> confirmation;
+  binary preview; "Read as")
+- [x] 4. HydrideSegmentation **b7f7886 (local, not pushed)**: `src/microseg/io/mask_download.py`
+  (`binary_labels` reuses `to_index_mask` + `normalize_binary_index_mask(two_value_zero_background)`,
+  refuses non-binary), routes `/api/jobs/<id>/mask_labels.png|mask_preview.png|masks.zip`
+  (`422 MASK_NOT_BINARY`), "Download mask" menu keeping the old download, help + intranet_web_app.md,
+  `tests/test_web_mask_downloads.py` (18). Its CHANGELOG is left untouched because it carries
+  someone's uncommitted 1.0.1 entry.
+- [x] 5. Final verification recorded below; OnlineAnnotator committed and pushed to `main` together
+  with this ledger entry
+
+### Verification (2026-09-15, final code)
+
+| Check | Result |
+| --- | --- |
+| OnlineAnnotator `python -m pytest` | 142 passed (96 before + 34 analysis + 12 net new import tests; incl. Node label-engine tests) |
+| `python -m ruff check src tests` | clean |
+| Playwright `journeys.spec.js` + `modes.spec.js` | 13 passed (mask journey extended); see the browser-suite note for the untracked spec |
+| Visual check (demo server, Browser pane) | {0,128} mask: "Two-value mask", 128 -> class 1 Hydride, foreground 3.3%, "nothing is resized", confirmation box shown |
+| Demonstration script (10 cases, real API) | as in the table above |
+| HydrideSegmentation `tests/test_web_mask_downloads.py` | 18 passed |
+| HydrideSegmentation web/report/API/jobs/library/corrections suites | 135 passed, 1 skipped, 1 failed **pre-existing** (version string, uncommitted 1.0.1 bump) |
+
+### Outcome
+
+Goal complete in code, tests and docs. Open for the user: push HydrideSegmentation `b7f7886`
+(repository owned by Pushpalathadevi, left local on purpose) and add its CHANGELOG line once the
+pending 1.0.1 release work there is committed. OnlineAnnotator changes sit under *Unreleased*
+(schema 4, so the next release is 2.1.0 with the usual RUNBOOK rollback note).
+
+### Defects found while testing (fixed)
+
+- Mapping pixel counts were zipped from a Python `set` against numpy's ordered counts (wrong
+  count per colour/palette index possible) and the palette mapping indexed a 32-entry listing
+  (IndexError beyond 32 used indices). Found by ruff B905; regression assertions added.
+- `field()` puts a `(?)` button inside the `<label>`, so the label named the button, not the
+  control (Playwright `getByLabel` found the button). The import controls now carry explicit
+  `aria-label`s.
+
+### Browser-suite note
+
+`tests/browser/capture_screenshots.spec.js` is an **untracked file that is not ours** (writes to a
+`.gemini` path). `npm run test:browser` picks it up; it creates a project as admin on the shared
+demo server, after which three older journeys fail on "Annotate next resolved to 2 elements". The
+tracked suite is run explicitly: `npx playwright test tests/browser/journeys.spec.js
+tests/browser/modes.spec.js`. The file is left untouched.
+
+### Demonstration (real API, `scratchpad/mask_demo.py`; classes 1 Hydride #FF0000, 2 Pore #0000FF)
+
+| Mask | Detected | Action | Stored values | Provenance (`mask_import`) |
+| --- | --- | --- | --- | --- |
+| {0,1} | indexed | imported as is | {0,1} | indexed, "stored exactly", class_pixels {1:180} |
+| {0,255} | binary_0_255 | 255 -> class 1 | {0,1} | mapping 255 -> class 1 Hydride, "Binary normalization" |
+| {0,128} | binary_like | 409 "only 0 and 128 ... confirm"; confirm=true -> imported | {0,1} | confirmation_required, confirmed=true |
+| {0,2} (class 2 valid) | indexed | kept as class 2 | {0,2} | mapping 2 -> class 2 Pore |
+| {0,1,2} | indexed | kept | {0,1,2} | class_pixels {1:180, 2:40} |
+| grey 0..255 ramp | grayscale_multilevel | 400 "choose Grayscale threshold (suggested 126)"; threshold 128 + confirm -> imported | {0,1} | encoding threshold, threshold 128, confirmed |
+| RGB class colours | colour | colours -> classes | {0,1,2} | mapping #FF0000 -> 1, #0000FF -> 2 |
+| red on black | red_on_black | red -> class 1 | {0,1} | HydrideSegmentation red rule in normalization |
+| palette PNG idx {0,1,2} | palette_indexed | indices kept | {0,1,2} | warning: palette colours differ, numbers stored |
+| 32x24 on 64x48 | wrong_size | 400 "never resized ... export at full resolution" | unchanged {0} | none (nothing imported) |

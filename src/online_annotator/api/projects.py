@@ -11,10 +11,9 @@ from sqlalchemy.orm import Session
 
 from ..config import Settings
 from ..db import get_db
-from ..models import AuditEvent, Export, Image, LabelClass, Project, User
-from ..services import access, audit, imaging, workflow
+from ..models import AuditEvent, Export, LabelClass, Project, User
+from ..services import access, audit, imaging, mask_import, workflow
 from ..services import exports as export_ops
-from ..services import labels as label_ops
 from ..services import projects as project_ops
 from . import serialize
 from .deps import active_user, admin, get_project, get_settings
@@ -208,56 +207,51 @@ def next_image(project_id: int, mode: WorkingMode | None = None, after: int | No
     return {"image_id": img.id if img else None}
 
 
+@router.post("/projects/{project_id}/masks/analyze")
+async def analyze_masks(project_id: int, files: list[UploadFile] = File(...), mode: str = Form("auto"),
+                        import_class: int | None = Form(None), threshold: float | None = Form(None),
+                        invert: bool = Form(False), db: Session = Depends(get_db),
+                        _: User = Depends(active_user)) -> dict:
+    """Preview a bulk import: each file's matching image and how it would be read. Stores nothing."""
+    project = get_project(project_id, db)
+    options = mask_import.ImportOptions(mode=mode, target_class=import_class, threshold=threshold, invert=invert)
+    uploads = [(mask_import.file_name(u.filename), await u.read()) for u in files]
+    return {"results": mask_import.analyse_batch(project, uploads, options)}
+
+
 @router.post("/projects/{project_id}/masks")
 async def import_masks(project_id: int, files: list[UploadFile] = File(...), import_class: int | None = Form(None),
-                       source_tool: str = Form(""), remarks: str = Form(""),
+                       source_tool: str = Form(""), remarks: str = Form(""), mode: str = Form("auto"),
+                       threshold: float | None = Form(None), invert: bool = Form(False),
+                       confirm: bool = Form(False),
                        db: Session = Depends(get_db), user: User = Depends(active_user),
                        settings: Settings = Depends(get_settings)) -> dict:
     """Load existing masks in bulk as the working copies of matching images.
 
     For a folder of masks already produced elsewhere -- another segmentation tool, an
     in-house script, model predictions -- so annotators correct them instead of starting
-    from scratch. A mask ``<stem>_mask.png`` or ``<stem>.png`` is matched to the image with
-    that stem or original filename stem. ``source_tool`` and ``remarks`` are recorded on
-    every image the batch touches.
+    from scratch. A mask ``<stem>_mask.png``, ``<stem>_mask_labels.png``,
+    ``<stem>_mask_preview.png`` or ``<stem>.png`` is matched to the image with that stem or
+    original filename stem. Every file is read exactly as the single-image import reads it;
+    ``confirm=true`` accepts the files the analysis marks as needing confirmation.
+    ``source_tool`` and ``remarks`` are recorded on every image the batch touches.
     """
     project = get_project(project_id, db)
     try:
         access.require_mode(user, access.ANNOTATE, "import masks")
     except access.Refused as exc:
         raise HTTPException(exc.status, str(exc)) from exc
-    classes = {c.index: c.color for c in project.classes}
-    target = import_class if import_class in classes else min(classes)
-    by_stem: dict[str, Image] = {}
-    for img in project.images:
-        by_stem[img.stem.lower()] = img
-        by_stem.setdefault(Path(img.original_filename).stem.lower(), img)
-    imported, errors = [], []
-    for upload in files:
-        name = Path(upload.filename or "mask").name
-        stem = Path(name).stem
-        key = stem[:-5] if stem.lower().endswith("_mask") else stem
-        img = by_stem.get(key.lower()) or by_stem.get(imaging.safe_stem(key).lower())
-        if img is None:
-            errors.append(f"{name}: no image called {key!r} in this project.")
-            continue
-        try:
-            labels_arr, kind = label_ops.decode_mask_file(await upload.read(), img.width, img.height,
-                                                          classes, target)
-            workflow.import_working(db, settings, img, user, labels_arr,
-                                    origin=f"imported from {name} ({kind})", source_file=name,
-                                    source_tool=source_tool, source_remarks=remarks)
-            db.commit()
-            imported.append(f"{name} -> {img.stem} ({kind} mask)")
-        except (label_ops.LabelError, workflow.WorkflowError) as exc:
-            db.rollback()
-            errors.append(f"{name}: {exc}")
-    if imported:
+    options = mask_import.ImportOptions(mode=mode, target_class=import_class, threshold=threshold, invert=invert,
+                                        confirm=confirm, source_tool=source_tool, remarks=remarks)
+    uploads = [(mask_import.file_name(u.filename), await u.read()) for u in files]
+    outcome = mask_import.import_batch(db, settings, project, user, uploads, options)
+    if outcome["imported"]:
         audit.record(db, settings.audit_file, user.email, "masks_imported",
-                     f"Imported {len(imported)} pre-annotation mask(s) into {project.name}.",
+                     f"Imported {len(outcome['imported'])} pre-annotation mask(s) into {project.name}.",
                      project_id=project.id,
-                     details={"files": imported, "source_tool": source_tool, "remarks": remarks})
-    return {"imported": imported, "errors": errors}
+                     details={"files": outcome["imported"], "source_tool": source_tool, "remarks": remarks,
+                              "interpretations": outcome["records"]})
+    return {"imported": outcome["imported"], "errors": outcome["errors"], "results": outcome["results"]}
 
 
 @router.get("/projects/{project_id}/activity")

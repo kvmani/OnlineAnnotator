@@ -254,6 +254,38 @@ test("a user imports an existing mask, corrects it and the source is recorded", 
   await page.getByRole("button", { name: "Import a mask…" }).click();
   const dialog = page.getByRole("dialog", { name: "Import an existing mask" });
   await expect(dialog).toContainText("120 × 90");
+
+  // A greyscale gradient (e.g. a probability map) is never binarized on its own: the preview
+  // refuses it, offers the threshold reading, and that reading waits for a confirmation.
+  await dialog.evaluate(async (root) => {
+    const c = document.createElement("canvas");
+    c.width = 120;
+    c.height = 90;
+    const g = c.getContext("2d");
+    const ramp = g.createLinearGradient(0, 0, 120, 0);
+    ramp.addColorStop(0, "#000");
+    ramp.addColorStop(1, "#fff");
+    g.fillStyle = ramp;
+    g.fillRect(0, 0, 120, 90);
+    const blob = await new Promise((r) => c.toBlob(r, "image/png"));
+    const input = root.querySelector('input[type="file"]');
+    const dt = new DataTransfer();
+    dt.items.add(new File([blob], "probability.png", { type: "image/png" }));
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  const preview = dialog.locator(".mask-analysis");
+  await expect(preview).toContainText("Greyscale image with many levels");
+  await expect(preview).toContainText("Nothing will be imported");
+  await preview.getByRole("button", { name: /Read it with Grayscale threshold/ }).click();
+  await expect(dialog.getByLabel("Threshold", { exact: true })).not.toHaveValue("");
+  await expect(preview).toContainText("Greyscale mask cut at a threshold");
+  await expect(dialog.locator(".confirm-box")).toBeVisible();
+  await expect(dialog.locator(".confirm-box")).toContainText("Confirm the threshold");
+  await dialog.getByRole("button", { name: "Import", exact: true }).click();
+  await expect(dialog.locator(".alert-warn", { hasText: "tick the confirmation" })).toBeVisible();
+  await dialog.getByLabel("How to read the file").selectOption("auto");
+
   await dialog.evaluate(async (root) => {
     const c = document.createElement("canvas");
     c.width = 120;
@@ -270,16 +302,23 @@ test("a user imports an existing mask, corrects it and the source is recorded", 
     input.files = dt.files;
     input.dispatchEvent(new Event("change", { bubbles: true }));
   });
+  // Before anything is stored, the dialog says how the file will be read.
+  await expect(preview).toContainText("Binary display mask (0/255)");
+  await expect(preview).toContainText("255 → class 1");
+  await expect(preview).toContainText("nothing is resized");
+  await expect(dialog.locator(".confirm-box")).toBeHidden();
   await dialog.locator('input[type="text"]').fill("HydrideSegmentation v2.3");
   await dialog.locator("textarea").fill("Model run of 2026-09-10; misses faint tips.");
   await dialog.getByRole("button", { name: "Import", exact: true }).click();
 
   // Match the toast by its text, not by position: an earlier toast ("Project created")
   // can still be on screen, and which one is first is a race.
-  await expect(page.locator(".toast", { hasText: "binary mask" })).toBeVisible();
+  await expect(page.locator(".toast", { hasText: "Binary display mask (0/255)" })).toBeVisible();
   await expect(page.locator(".ws-side")).toContainText("Imported mask, corrected here");
   await expect(page.locator(".ws-side")).toContainText("HydrideSegmentation v2.3");
   await expect(page.locator(".ws-side")).toContainText("misses faint tips");
+  await expect(page.locator(".ws-side")).toContainText("Read as");
+  await expect(page.locator(".ws-side")).toContainText("255 → class 1");
   // The imported pixels are on the canvas, so there is coverage before any drawing.
   await expect(page.locator('[data-cov="1"]')).not.toHaveText("");
   const beforeCorrection = await page.locator('[data-cov="1"]').getAttribute("title");

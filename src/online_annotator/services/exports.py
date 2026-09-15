@@ -300,6 +300,8 @@ def build_export(db: Session, settings: Settings, project: Project, user: User,
                 "mask_source_tool": version.mask_source_tool,
                 "mask_source_file": version.mask_source_file,
                 "mask_source_remarks": version.mask_source_remarks,
+                # How the imported file was read: encoding, mapping, threshold, warnings.
+                "mask_import": json.loads(version.mask_import_details) if version.mask_import_details else None,
                 "annotated_by": version.created_by,
                 "annotated_at": _iso(version.created_at),
                 "contributors": sorted({v.created_by for v in image.versions if v.number <= version.number}),

@@ -8,6 +8,7 @@ import {
   STATUS_HELP, STATUS_LABELS, clear, confirmDialog, field, fmtDate, fmtPct, fmtRelative, h, helpTip, icon, modal, statusBadge, toast,
 } from "../ui.js";
 import { startNext } from "./home.js";
+import { analysisView, importSummary, maskImportControls, previewer } from "./maskimport.js";
 
 const AUTOSAVE_DELAY = 2500;
 
@@ -633,6 +634,7 @@ class Workspace {
         img.mask_source_file ? ` From ${img.mask_source_file}.` : ""));
       const info = h("dl", { class: "info small" },
         img.mask_source_tool ? [h("dt", {}, "Made with"), h("dd", {}, img.mask_source_tool)] : null,
+        img.mask_import ? [h("dt", {}, "Read as"), h("dd", {}, importSummary(img.mask_import))] : null,
         img.mask_imported_by ? [h("dt", {}, "Imported by"), h("dd", {}, `${img.mask_imported_by.split("@")[0]}, ${fmtRelative(img.mask_imported_at)}`)] : null);
       if (info.children.length) rows.push(info);
       if (img.mask_source_remarks) rows.push(h("pre", { class: "guidelines" }, img.mask_source_remarks));
@@ -658,18 +660,38 @@ class Workspace {
 
   importMaskDialog() {
     const input = h("input", { type: "file", accept: ".png,.tif,.tiff,.bmp" });
-    const cls = h("select", {}, this.classes.map((c) => h("option", { value: c.index }, `${c.index} · ${c.name}`)));
+    const controls = maskImportControls(this.classes);
     const tool = h("input", { type: "text", maxlength: "200", value: this.image.mask_source_tool || "", placeholder: "e.g. HydrideSegmentation v2.3, ImageJ threshold, in-house script" });
     const remarks = h("textarea", { rows: "3", maxlength: "4000", placeholder: "e.g. Model run of 2026-09-10; misses faint hydride tips near grain boundaries." }, this.image.mask_source_remarks || "");
+    const preview = h("div", { class: "mask-preview", "aria-live": "polite" });
     const result = h("div");
+    let analysis = null;
+    const refresh = previewer(async () => {
+      if (!input.files.length) return null;
+      const fd = new FormData();
+      fd.append("file", input.files[0], input.files[0].name);
+      controls.append(fd);
+      return (await api.form(`api/v1/images/${this.image.id}/mask-import/analyze`, fd)).analysis;
+    }, (found, err) => {
+      analysis = found;
+      clear(preview);
+      clear(result);
+      if (err) preview.append(h("div", { class: "alert alert-error" }, err.message));
+      else if (found) preview.append(analysisView(found, { onUseMode: (m, t) => controls.useMode(m, t) }));
+      controls.setConfirmation(found && found.ok && found.requires_confirmation ? found.confirmation : null);
+    });
+    input.addEventListener("change", refresh);
+    controls.onChange(refresh);
     const body = h("div", { class: "stack" },
       h("p", {}, "Load a mask you already have for ", h("strong", {}, this.image.stem), " and correct it here, instead of labelling from scratch."),
       h("ul", { class: "compact small" },
         h("li", {}, "It must be exactly ", h("strong", {}, `${this.image.width} × ${this.image.height}`), " pixels. A mask of any other size is refused rather than resized, because resizing would change the ground truth."),
-        h("li", {}, "Accepted: black/white (0/255), class numbers (indexed), the project's class colours, or red-on-black."),
+        h("li", {}, "After you choose the file, the preview says what was detected and which class numbers will be stored. Nothing changes until you press Import."),
         h("li", {}, "This replaces the labels currently on screen. Earlier submitted versions stay in the history.")),
       field("Mask file", input),
-      field("Black/white and red masks become class", cls, "Binary and red masks have only one foreground; choose which class it means."),
+      controls.fields,
+      preview,
+      controls.confirmBox,
       field("Which tool made this mask?", tool, "Recorded with the image and written into the export manifest."),
       field("Remarks (optional)", remarks, "Anything worth knowing: the model version, settings, known weaknesses. Kept with the image and exported."),
       result);
@@ -687,10 +709,18 @@ class Workspace {
               toast("Choose a mask file first.", "info");
               return true; // keep open
             }
+            if (analysis && !analysis.ok) {
+              clear(result).append(h("div", { class: "alert alert-error" }, "Nothing was imported. ", analysis.error));
+              return true;
+            }
+            if (analysis && analysis.requires_confirmation && !controls.confirmed) {
+              clear(result).append(h("div", { class: "alert alert-warn" }, "Check the preview and tick the confirmation above, then press Import."));
+              return true;
+            }
             if (this.hasUnsaved()) await this.saveNow(false);
             const fd = new FormData();
             fd.append("file", input.files[0], input.files[0].name);
-            fd.append("import_class", cls.value);
+            controls.append(fd, { withConfirm: true });
             fd.append("source_tool", tool.value);
             fd.append("remarks", remarks.value);
             try {

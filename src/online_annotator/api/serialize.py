@@ -48,7 +48,13 @@ def version(v: Version) -> dict[str, Any]:
             "reviewed_at": iso(v.reviewed_at), "review_comment": v.review_comment,
             "class_pixels": v.pixels, "mask_sha256": v.mask_sha256,
             "mask_source": v.mask_source, "mask_source_tool": v.mask_source_tool,
-            "mask_source_remarks": v.mask_source_remarks, "mask_source_file": v.mask_source_file}
+            "mask_source_remarks": v.mask_source_remarks, "mask_source_file": v.mask_source_file,
+            "mask_import": import_details(v.mask_import_details)}
+
+
+def import_details(text: str) -> dict | None:
+    """How an imported mask file was interpreted (``labels.MaskAnalysis.provenance``), if any."""
+    return json.loads(text) if text else None
 
 
 def image(db: Session, img: Image, viewer: User, detail: bool = False) -> dict[str, Any]:
@@ -71,6 +77,7 @@ def image(db: Session, img: Image, viewer: User, detail: bool = False) -> dict[s
             "mask_source_tool": img.mask_source_tool, "mask_source_remarks": img.mask_source_remarks,
             "mask_source_file": img.mask_source_file, "mask_imported_by": img.mask_imported_by,
             "mask_imported_at": iso(img.mask_imported_at),
+            "mask_import": import_details(img.mask_import_details),
             "mask_source_description": workflow.describe_source(img),
             "versions": [version(v) for v in sorted(img.versions, key=lambda v: -v.number)],
             "display_url": f"api/v1/images/{img.id}/display",

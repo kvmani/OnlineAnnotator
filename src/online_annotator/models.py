@@ -169,6 +169,8 @@ class Image(Base):
     mask_source_file: Mapped[str] = mapped_column(String(255), default="")
     mask_imported_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mask_imported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # JSON: how the imported file was interpreted (labels.MaskAnalysis.provenance), "" if none.
+    mask_import_details: Mapped[str] = mapped_column(Text, default="")
 
     project: Mapped[Project] = relationship(back_populates="images")
     versions: Mapped[list[Version]] = relationship(
@@ -222,6 +224,7 @@ class Version(Base):
     mask_source_tool: Mapped[str] = mapped_column(String(200), default="")
     mask_source_remarks: Mapped[str] = mapped_column(Text, default="")
     mask_source_file: Mapped[str] = mapped_column(String(255), default="")
+    mask_import_details: Mapped[str] = mapped_column(Text, default="")
 
     image: Mapped[Image] = relationship(back_populates="versions")
 

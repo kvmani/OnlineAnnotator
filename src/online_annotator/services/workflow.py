@@ -211,7 +211,7 @@ def save_working(db: Session, settings: Settings, image: Image, user: User, labe
 
 def import_working(db: Session, settings: Settings, image: Image, user: User, labels: np.ndarray,
                    origin: str, source_file: str = "", source_tool: str = "",
-                   source_remarks: str = "") -> None:
+                   source_remarks: str = "", import_details: dict | None = None) -> None:
     """Replace the working copy with a mask produced outside this tool.
 
     The user then corrects it instead of starting from scratch. The image is marked
@@ -231,6 +231,7 @@ def import_working(db: Session, settings: Settings, image: Image, user: User, la
     image.mask_source_file = source_file[:255]
     image.mask_source_tool = source_tool.strip()[:200]
     image.mask_source_remarks = source_remarks.strip()
+    image.mask_import_details = json.dumps(import_details, sort_keys=True) if import_details else ""
     image.mask_imported_by = user.email
     image.mask_imported_at = utcnow()
     if image.status == "new":
@@ -259,6 +260,11 @@ def set_source_remarks(db: Session, image: Image, tool: str | None, remarks: str
         image.mask_source_tool = tool.strip()[:200]
     if remarks is not None:
         image.mask_source_remarks = remarks.strip()
+    if image.mask_import_details:
+        details = json.loads(image.mask_import_details)
+        details.update({"source_tool": image.mask_source_tool, "remarks": image.mask_source_remarks,
+                        "remarks_updated_at": utcnow().isoformat()})
+        image.mask_import_details = json.dumps(details, sort_keys=True)
     db.commit()
 
 
@@ -275,7 +281,8 @@ def _snapshot(settings: Settings, image: Image, labels: np.ndarray, user: User, 
                       mask_sha256="",
                       mask_source=image.mask_source, mask_source_tool=image.mask_source_tool,
                       mask_source_remarks=image.mask_source_remarks,
-                      mask_source_file=image.mask_source_file)
+                      mask_source_file=image.mask_source_file,
+                      mask_import_details=image.mask_import_details)
     version.mask_sha256 = label_ops.save(labels, mask_dir(settings, image) / version.mask_file)
     image.versions.append(version)
     return version
@@ -387,4 +394,5 @@ def restore(db: Session, settings: Settings, image: Image, user: User, version: 
     image.mask_source_tool = version.mask_source_tool
     image.mask_source_remarks = version.mask_source_remarks
     image.mask_source_file = version.mask_source_file
+    image.mask_import_details = version.mask_import_details
     db.commit()

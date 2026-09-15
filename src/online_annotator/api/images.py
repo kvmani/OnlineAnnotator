@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import io
 from dataclasses import asdict
-from pathlib import PurePosixPath
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse
@@ -14,7 +13,7 @@ from sqlalchemy.orm import Session
 from ..config import Settings
 from ..db import get_db
 from ..models import Image, User, Version
-from ..services import access, audit, imaging, workflow
+from ..services import access, audit, imaging, mask_import, workflow
 from ..services import labels as label_ops
 from ..services import projects as project_ops
 from . import serialize
@@ -231,43 +230,56 @@ def review(image_id: int, body: ReviewBody, db: Session = Depends(get_db), user:
     return {"image": serialize.image(db, img, user, detail=True)}
 
 
+@router.post("/{image_id}/mask-import/analyze")
+async def analyze_mask(image_id: int, file: UploadFile = File(...), mode: str = Form("auto"),
+                       import_class: int | None = Form(None), threshold: float | None = Form(None),
+                       invert: bool = Form(False), db: Session = Depends(get_db),
+                       _: User = Depends(active_user)) -> dict:
+    """Say what a mask file is and exactly how it would be imported, without storing anything."""
+    img = get_image(image_id, db)
+    options = mask_import.ImportOptions(mode=mode, target_class=import_class, threshold=threshold, invert=invert)
+    analysis, _labels = mask_import.analyse(img, await file.read(), mask_import.file_name(file.filename), options)
+    return {"analysis": analysis.to_dict()}
+
+
 @router.post("/{image_id}/mask-import")
 async def import_mask(image_id: int, file: UploadFile = File(...), import_class: int | None = Form(None),
-                      source_tool: str = Form(""), remarks: str = Form(""),
+                      source_tool: str = Form(""), remarks: str = Form(""), mode: str = Form("auto"),
+                      threshold: float | None = Form(None), invert: bool = Form(False),
+                      confirm: bool = Form(False),
                       db: Session = Depends(get_db), user: User = Depends(active_user),
                       settings: Settings = Depends(get_settings)) -> dict:
     """Load one externally produced mask as this image's working copy, to be corrected here.
 
     For annotators who already have a mask for this micrograph -- from another segmentation
     tool, an in-house script or a model prediction -- and want to fix its mistakes instead of
-    labelling from scratch. The image records that its annotation was imported, which tool
-    produced it and the annotator's remarks; that provenance follows every submitted version
-    into the export manifest.
+    labelling from scratch. The file is read by ``mode`` (default ``auto``); a file that reads
+    two ways is refused with ``409`` until the request carries ``confirm=true``. The image
+    records that its annotation was imported, which tool produced it, the annotator's remarks
+    and how the file was interpreted; that provenance follows every submitted version into the
+    export manifest.
     """
     img = get_image(image_id, db)
-    classes = {c.index: c.color for c in img.project.classes}
-    if not classes:
-        raise HTTPException(400, "This project has no classes yet, so a mask cannot be interpreted.")
-    target = import_class if import_class in classes else min(classes)
-    name = PurePosixPath((file.filename or "mask").replace("\\", "/")).name
+    name = mask_import.file_name(file.filename)
+    options = mask_import.ImportOptions(mode=mode, target_class=import_class, threshold=threshold, invert=invert,
+                                        confirm=confirm, source_tool=source_tool, remarks=remarks)
     try:
-        labels_arr, kind = label_ops.decode_mask_file(await file.read(), img.width, img.height, classes, target)
-        workflow.import_working(db, settings, img, user, labels_arr,
-                                origin=f"imported from {name} ({kind})", source_file=name,
-                                source_tool=source_tool, source_remarks=remarks)
+        analysis = mask_import.import_file(db, settings, img, user, await file.read(), name, options)
         db.commit()
-    except label_ops.LabelError as exc:
+    except mask_import.ImportRefused as exc:
         db.rollback()
-        raise HTTPException(400, f"{name}: {exc}") from exc
+        raise HTTPException(exc.status, f"{name}: {exc}") from exc
     except access.Refused as exc:
         db.rollback()
         raise _workflow_error(exc) from exc
     audit.record(db, settings.audit_file, user.email, "mask_imported",
-                 f"Imported {name} ({kind} mask) as the working copy of {img.stem}.",
+                 f"Imported {name} ({analysis.encoding_name}) as the working copy of {img.stem}.",
                  project_id=img.project_id, image_id=img.id,
-                 details={"file": name, "kind": kind, "source_tool": source_tool, "remarks": remarks})
-    return {"image": serialize.image(db, img, user, detail=True), "kind": kind,
-            "message": f"Loaded {name} as a {kind} mask. Correct it, then submit for review."}
+                 details={"file": name, "kind": analysis.kind, "source_tool": img.mask_source_tool,
+                          "remarks": remarks, "interpretation": serialize.import_details(img.mask_import_details)})
+    return {"image": serialize.image(db, img, user, detail=True), "kind": analysis.kind,
+            "analysis": analysis.to_dict(),
+            "message": f"Loaded {name}: {analysis.encoding_name}. Correct it, then submit for review."}
 
 
 @router.patch("/{image_id}/mask-source")

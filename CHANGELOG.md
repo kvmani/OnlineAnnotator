@@ -5,6 +5,37 @@ the running version is `src/online_annotator/_version.py`.
 
 ## [Unreleased]
 
+Upload the mask you already have: the import says what it detected, how it will read the file and
+which class numbers will be stored. Common masks import on their own; ambiguous ones ask.
+
+### Added
+- **Mask interpretation preview.** Both import dialogs show, before anything is stored, the
+  detected encoding, the file's format/mode/dtype, the values or colours found, each value → class
+  mapping with pixel counts, the foreground share, warnings and "nothing is resized". New
+  `POST /api/v1/images/{id}/mask-import/analyze` and `POST /api/v1/projects/{id}/masks/analyze`
+  return this analysis without changing anything.
+- **Reading modes:** Auto detect (default), Indexed class mask, Binary mask, Grayscale threshold and
+  Colour mask, plus *Foreground is black* for black-on-white masks. Import endpoints accept `mode`,
+  `threshold`, `invert` and `confirm`.
+- Palette PNGs are read by their indices when those are class numbers (warning or asking when the
+  palette colours tell a different story); 16-bit, 1-bit and alpha-channel masks are understood.
+- Bulk import pairs HydrideSegmentation's `<stem>_mask_labels.png` and `<stem>_mask_preview.png`.
+- **Import provenance** `mask_import` on images, versions (frozen), the audit trail and every export
+  manifest record: file SHA-256, detected encoding, mapping, normalization, target class, threshold,
+  warnings, confirmation. Database schema 4 (additive migration, backed up first).
+
+### Changed
+- Auto detection keeps any mask whose values are all class numbers exactly (a `{0, 2}` mask in a
+  project with classes 1 and 2 stays class 2), and asks for confirmation instead of guessing for
+  two-value masks such as `{0, 128}` or `{0, 7}`, red masks with soft edges, and palette PNGs whose
+  colours disagree with their indices (`409` until `confirm=true`). Greyscale images with many
+  levels are refused in auto mode and import only with an explicit, confirmed threshold.
+- Red-on-black masks must be red and (near-)black only: a picture that merely contains some red
+  (a photograph, an overlay) is refused instead of being imported as a mask.
+- Refusals are actionable: an unknown class value names the project's classes and the reading to
+  choose; photographs, the image itself, multi-page files and wrong sizes each say what to do.
+- Single-image and bulk import share one decoding path (`services/mask_import.py`).
+
 ## [2.0.0] — 2026-09-14
 
 Every user can annotate **and** review. There are no annotator or reviewer accounts any more.

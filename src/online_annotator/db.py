@@ -38,7 +38,7 @@ from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 logger = logging.getLogger(__name__)
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class Base(DeclarativeBase):
@@ -119,9 +119,16 @@ def _v3_working_modes(conn: Connection) -> None:
         conn.execute(text("ALTER TABLE users DROP COLUMN role"))
 
 
+def _v4_mask_import_details(conn: Connection) -> None:
+    """Release 2.1.0: how an imported mask file was interpreted (encoding, mapping, threshold)."""
+    for table in ("images", "versions"):
+        _add_columns(conn, table, [("mask_import_details", "TEXT NOT NULL DEFAULT ''")])
+
+
 MIGRATIONS: tuple[Migration, ...] = (
     Migration(2, "mask provenance on images and versions", _v2_mask_provenance),
     Migration(3, "working modes: users.role -> is_admin + active_mode", _v3_working_modes),
+    Migration(4, "mask import interpretation on images and versions", _v4_mask_import_details),
 )
 
 

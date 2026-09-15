@@ -104,6 +104,21 @@ One `.txt` per image, one line per outer contour: `<class index − 1> x1 y1 x2 
     "mask_source": "imported", "mask_source_tool": "HydrideSegmentation v2.3",
     "mask_source_file": "sample_01_mask.png",
     "mask_source_remarks": "Model run of 2026-09-10; misses faint tips near grain boundaries.",
+    "mask_import": {"schema": "online-annotator.mask-import/1", "file": "sample_01_mask.png",
+                    "file_sha256": "…", "source_tool": "HydrideSegmentation v2.3",
+                    "requested_mode": "auto", "detected_encoding": "binary_0_255",
+                    "encoding_name": "Binary display mask (0/255)",
+                    "file_format": {"format": "PNG", "mode": "L", "dtype": "uint8", "channels": 1,
+                                    "width": 640, "height": 480},
+                    "observed_values": [0, 255], "value_count": 2,
+                    "mapping": [{"source": "255", "class_index": 1, "target": "class 1 Hydride", "pixels": 1726},
+                                {"source": "0", "class_index": 0, "target": "background", "pixels": 305474}],
+                    "normalization": "Binary normalization: 255 marks the foreground and becomes class 1 Hydride; 0 becomes background.",
+                    "target_class": 1, "threshold": null, "invert": false, "warnings": [],
+                    "confirmation_required": false, "confirmed": false, "resized": false,
+                    "class_pixels": {"1": 1726}, "foreground_fraction": 0.005618,
+                    "imported_by": "arun@lab.example", "imported_at": "…+00:00",
+                    "tool": {"id": "online-annotator", "version": "2.1.0"}, "…": "…"},
     "annotated_by": "riya@lab.example", "annotated_at": "…+00:00",
     "contributors": ["arun@lab.example", "riya@lab.example"],
     "approved_by": "riya@lab.example", "approved_at": "…+00:00",
@@ -120,6 +135,18 @@ recorded about it; all three are empty strings for `"manual"`. The value is froz
 version is created and never changes afterwards, and hand-correcting an imported mask does not
 make it `"manual"` — so a training pipeline can weight, audit or exclude corrected machine
 output separately from labels drawn from scratch.
+
+`mask_import` (added in 2.1.0, additive; `null` for hand-drawn versions and for imports made before
+2.1.0) records exactly how the imported file was read, so the interpretation can be reproduced:
+the file name and SHA-256, the requested reading (`auto`, `indexed`, `binary`, `threshold`,
+`colour`), the `detected_encoding` (`indexed`, `palette_indexed`, `binary_0_1`, `binary_0_255`,
+`binary_like`, `binary`, `threshold`, `colour`, `red_on_black`), the file's format, mode and dtype,
+the values or colours observed, the `mapping` from each source value or colour to a class with its
+pixel count, the `normalization` in words, the target class, the `threshold` (only for threshold
+imports), `invert`, any warnings, whether a confirmation was required and given, and the resulting
+class pixel counts. `resized` is always `false`: masks of the wrong size are refused, never resized.
+Remarks edited after the import are mirrored into `source_tool` and `remarks` with
+`remarks_updated_at`.
 
 `label_sha256` hashes the label values themselves (`"<w>x<h>:"` + raw bytes), independent of PNG
 encoder settings, and equals the version's `mask_sha256` in the application database.

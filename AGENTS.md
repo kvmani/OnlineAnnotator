@@ -132,7 +132,7 @@ src/online_annotator/
   models.py        SQLAlchemy models (SQLite WAL by default)
   db.py            engine, schema version and numbered migrations (db.MIGRATIONS)
   services/        ALL behaviour: auth, access (privilege + working mode), workflow (leases +
-                   state machine), labels, imaging,
+                   state machine), labels (incl. mask-file analysis), mask_import, imaging,
                    projects, exports, audit, demo. Pure, unit-tested, no HTTP knowledge.
   api/             thin FastAPI routers: validate, call a service, serialise.
   app.py           factory: middleware (CSRF guard, headers, caching), routers, static SPA.

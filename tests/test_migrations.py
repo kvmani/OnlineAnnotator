@@ -133,7 +133,7 @@ def test_an_interrupted_upgrade_can_simply_be_started_again(tmp_path):
         con.commit()
     engine = make_engine(url)
     try:
-        assert init_schema(engine).applied == [3]
+        assert init_schema(engine).applied == list(range(3, SCHEMA_VERSION + 1))
         with make_session_factory(engine)() as db:
             assert db.query(User).filter(User.email == "lead@lab.test").one().is_admin is True
     finally:

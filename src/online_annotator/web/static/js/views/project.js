@@ -7,6 +7,7 @@ import {
   helpTip, icon, modal, plural, statusBadge, toast,
 } from "../ui.js";
 import { modeNote, startNext } from "./home.js";
+import { batchView, maskImportControls, previewer } from "./maskimport.js";
 
 // Every tab is for every user, in either working mode, except the administrator's Settings.
 const TABS = [
@@ -315,18 +316,41 @@ function uploadDialog(project, onDone) {
 
 function importMasksDialog(project, onDone) {
   const input = h("input", { type: "file", multiple: true, accept: ".png,.tif,.tiff,.bmp" });
-  const cls = h("select", {}, project.classes.map((c) => h("option", { value: c.index }, `${c.index} · ${c.name}`)));
+  const controls = maskImportControls(project.classes);
   const tool = h("input", { type: "text", maxlength: "200", placeholder: "e.g. HydrideSegmentation v2.3, ImageJ threshold, in-house script" });
   const remarks = h("textarea", { rows: "3", maxlength: "4000", placeholder: "e.g. Model run of 2026-09-10; tends to miss faint hydride tips near grain boundaries." });
+  const preview = h("div", { class: "mask-preview", "aria-live": "polite" });
   const result = h("div");
+  const formData = () => {
+    const fd = new FormData();
+    for (const f of input.files) fd.append("files", f, f.name);
+    return fd;
+  };
+  const refresh = previewer(async () => {
+    if (!input.files.length) return null;
+    const fd = formData();
+    controls.append(fd);
+    return (await api.form(`api/v1/projects/${project.id}/masks/analyze`, fd)).results;
+  }, (found, err) => {
+    clear(preview);
+    clear(result);
+    if (err) preview.append(h("div", { class: "alert alert-error" }, err.message));
+    else if (found) preview.append(batchView(found, { onUseMode: (m, t) => controls.useMode(m, t) }));
+    const waiting = found ? found.filter((r) => r.status === "needs_confirmation").length : 0;
+    controls.setConfirmation(waiting ? `Import the ${plural(waiting, "file")} marked “needs your confirmation” as described there.` : null);
+  });
+  input.addEventListener("change", refresh);
+  controls.onChange(refresh);
   const body = h("div", { class: "stack" },
     h("p", {}, "Use this to start from existing masks, for example predictions from a HydrideSegmentation model. People then only correct the mistakes."),
     h("ul", { class: "compact small" },
-      h("li", {}, "Name each mask after its image: ", h("code", {}, "sample_07_mask.png"), " or ", h("code", {}, "sample_07.png"), " matches the image ", h("code", {}, "sample_07"), "."),
-      h("li", {}, "Accepted: black/white (0/255), class numbers (indexed), the project's class colours, or red-on-black masks."),
+      h("li", {}, "Name each mask after its image: ", h("code", {}, "sample_07_mask.png"), ", ", h("code", {}, "sample_07_mask_labels.png"), " or ", h("code", {}, "sample_07.png"), " matches the image ", h("code", {}, "sample_07"), "."),
+      h("li", {}, "After you choose the files, the preview lists how each one will be read. Files that cannot be read safely are skipped and say why."),
       h("li", {}, "The mask becomes the image's working copy (status In progress). Submitted and approved images are never overwritten.")),
     field("Masks", input),
-    field("Black/white and red masks become class", cls, "Binary and red masks have only one foreground; choose which class it means."),
+    controls.fields,
+    preview,
+    controls.confirmBox,
     field("Which tool made these masks?", tool, "Recorded with every image in this batch and written into the export manifest, so anyone reading the dataset later knows the labels started as this tool's output rather than as hand-drawn work."),
     field("Remarks (optional)", remarks, "Anything worth knowing about these masks: the model version, known weaknesses, the settings used. Annotators see it while they correct the mask."),
     result);
@@ -344,17 +368,16 @@ function importMasksDialog(project, onDone) {
             toast("Choose mask files first.", "info");
             return true;
           }
-          const fd = new FormData();
-          for (const f of input.files) fd.append("files", f, f.name);
-          fd.append("import_class", cls.value);
+          const fd = formData();
+          controls.append(fd, { withConfirm: true });
           fd.append("source_tool", tool.value);
           fd.append("remarks", remarks.value);
           try {
             const res = await api.form(`api/v1/projects/${project.id}/masks`, fd);
+            clear(preview);
+            controls.setConfirmation(null);
             clear(result).append(h("div", { class: `alert ${res.errors.length ? "alert-warn" : "alert-ok"}` },
-              h("strong", {}, `${plural(res.imported.length, "mask")} imported.`),
-              res.imported.map((m) => h("div", { class: "small" }, "✓ ", m)),
-              res.errors.map((m) => h("div", { class: "small" }, "✗ ", m))));
+              h("strong", {}, `${plural(res.imported.length, "mask")} imported.`)), batchView(res.results));
             onDone();
           } catch (err) {
             clear(result).append(h("div", { class: "alert alert-error" }, err.message));
