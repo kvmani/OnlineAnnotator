@@ -415,10 +415,31 @@ ones ask. Semantic class IDs are kept separate from display pixel values; nothin
 
 ### Outcome
 
-Goal complete in code, tests and docs. Open for the user: push HydrideSegmentation `b7f7886`
-(repository owned by Pushpalathadevi, left local on purpose) and add its CHANGELOG line once the
-pending 1.0.1 release work there is committed. OnlineAnnotator changes sit under *Unreleased*
-(schema 4, so the next release is 2.1.0 with the usual RUNBOOK rollback note).
+Goal complete in code, tests and docs (OnlineAnnotator `f7dcea9`, CI green).
+
+## Release for office rollout (2026-09-15, rollout 2026-09-16 morning)
+
+User asked to push the HydrideSegmentation commit and prepare a suite release.
+
+- HydrideSegmentation: `b7f7886` pushed; annotated tag **v1.1.0** at `b7f7886` pushed (user chose
+  this over "annotator only"). Its version files still read 1.0.0 because the 1.0.1 bump and
+  release edits in that working tree are someone else's uncommitted work; the CHANGELOG line
+  there is still to be written once that work is committed.
+- OnlineAnnotator **2.1.0**: `_version.py`, CHANGELOG `[2.1.0] — 2026-09-15`; tag `v2.1.0`.
+  Verification before tagging: ruff, pytest, Node engine, Playwright journeys + modes.
+- ml_server_deploy **suite 1.12.0**: `annotator` ref v2.1.0, `hydride` ref v1.1.0 (comments
+  explain both), RUNBOOK rollback note for schema 4; tag `v1.12.0` builds the office archive.
+- 2.1.0 verification (2026-09-15): ruff clean; pytest 142 passed; Node engine 8 passed;
+  Playwright journeys + modes 13 passed.
+- CI made lean at the user's request (office target is air-gapped Ubuntu, Python 3.12): here one
+  ubuntu-24.04 job, ruff + pytest, on pushes to `main` and tags, cancelling superseded runs;
+  Playwright left CI and stays a local pre-release gate (AGENTS.md). ml_server_deploy CI is one job
+  (manifest, hygiene, shell syntax, unit tests; no ShellCheck/actionlint downloads, no rehearsal
+  job); its release workflow drops the duplicate lint, the second reproducibility build (covered by
+  a unit test) and the fixture rehearsal (run locally in WSL).
+- Rollout: download `ml-server-suite-v1.12.0.tar.gz` + `.sha256`, `./update.sh`. The annotator
+  backs up and upgrades its database to schema 4 on first start. Rolling back past 1.12.0
+  needs that copy restored (RUNBOOK "Rollback").
 
 ### Defects found while testing (fixed)
 

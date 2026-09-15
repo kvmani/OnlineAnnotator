@@ -5,6 +5,8 @@ the running version is `src/online_annotator/_version.py`.
 
 ## [Unreleased]
 
+## [2.1.0] — 2026-09-15
+
 Upload the mask you already have: the import says what it detected, how it will read the file and
 which class numbers will be stored. Common masks import on their own; ambiguous ones ask.
 
@@ -35,6 +37,8 @@ which class numbers will be stored. Common masks import on their own; ambiguous 
 - Refusals are actionable: an unknown class value names the project's classes and the reading to
   choose; photographs, the image itself, multi-page files and wrong sizes each say what to do.
 - Single-image and bulk import share one decoding path (`services/mask_import.py`).
+- CI is lean: one Ubuntu 24.04 / Python 3.12 job (lint + pytest) on pushes to `main` and tags,
+  matching the air-gapped office server. Browser journeys run locally before every release.
 
 ## [2.0.0] — 2026-09-14
 

@@ -176,6 +176,9 @@ entry, documentation update, and a note in the ledger.
 - Behaviour changes add or update tests in the same commit; bug fixes add a regression test.
 - Tests must not leave warnings, open resources or stray files.
 - Before a release or deployment run **all** of the above and record results in the ledger.
+- GitHub CI is deliberately lean: one Ubuntu 24.04 / Python 3.12 job (the office platform) running
+  `ruff` and `pytest` on pushes to `main` and tags. The Playwright journeys are not in CI; running
+  them locally before every release is part of the release checklist.
 - Browser testing tip: some automation harnesses inject clicks when sending key presses; drive
   the workspace with DOM events or Playwright's own keyboard, never with a harness that clicks.
 
