@@ -1,19 +1,21 @@
 // Interactive canvas editor: pan/zoom view, overlay rendering and the drawing tools.
 // All edits go through LabelMap (exact integer labels) and History (undo/redo).
-import { History, LabelMap, otsu, thresholdMask } from "./labelmap.js";
+import { History, LabelMap, otsu, polygonRegion, thresholdMask } from "./labelmap.js";
 
 export const TOOLS = {
   pan: { key: "V", label: "Pan", icon: "pan", hint: "Drag to move the image. Scroll to zoom. You can also hold Space or drag with the middle mouse button in any tool." },
-  brush: { key: "B", label: "Brush", icon: "brush", hint: "Drag to paint the selected class. Hold Shift to erase instead. [ and ] change the size." },
-  eraser: { key: "E", label: "Eraser", icon: "eraser", hint: "Drag to return pixels to background (unlabelled). [ and ] change the size." },
+  brush: { key: "B", label: "Brush", icon: "brush", hint: "Drag to paint the selected class. Hold Shift to erase instead. [ and ] change the size (Shift+[ and ] halve or double it); you can also type the diameter on the right." },
+  eraser: { key: "E", label: "Eraser", icon: "eraser", hint: "Drag to return pixels to background (unlabelled). Same size as the brush: [ and ] change it (Shift+[ and ] halve or double it)." },
   polygon: { key: "P", label: "Polygon", icon: "polygon", hint: "Click to place corners. Double-click, press Enter or click the first corner to fill. Backspace removes the last corner, Esc cancels. Shift while closing erases." },
   lasso: { key: "L", label: "Lasso", icon: "lasso", hint: "Drag around a region; releasing the mouse fills everything inside. Hold Shift to erase the region instead." },
-  wand: { key: "W", label: "Magic wand", icon: "wand", hint: "Click a dark (or bright) feature: the whole connected feature is labelled. If it spreads into the matrix lower the tolerance; if it misses faint edges raise it. Shift+click erases." },
-  threshold: { key: "T", label: "Box threshold", icon: "threshold", hint: "Drag a box over a region. Pixels darker (or brighter) than an automatic threshold are previewed; adjust on the right, then press Enter or Apply." },
+  wand: { key: "W", label: "Magic wand", icon: "wand", hint: "Click a dark (or bright) feature: the whole connected feature is labelled. If it spreads into the matrix lower the tolerance; if it misses faint edges raise it ([ and ] change it). Shift+click erases." },
+  threshold: { key: "T", label: "Box threshold", icon: "threshold", hint: "Drag a box over a region. Pixels darker (or brighter) than an automatic threshold are previewed; adjust on the right ([ and ] nudge it), then press Enter or Apply." },
+  polythreshold: { key: "R", label: "Polygon threshold", icon: "polythreshold", hint: "Click corners around a region; double-click, Enter or the first corner closes it. Pixels inside that are darker (or brighter) than an automatic threshold are previewed; adjust on the right ([ and ] nudge it), then press Enter or Apply. Backspace removes a corner, Esc cancels." },
   fill: { key: "G", label: "Fill", icon: "fill", hint: "Click inside an area to fill all connected pixels that currently have the same label, e.g. the inside of an outline you drew." },
 };
 
 const MIN_SCALE = 0.05;
+const MIN_THRESHOLD_AREA = 16; // pixels; the box threshold's minimum is a 4 x 4 box
 const MAX_SCALE = 40;
 
 function hexToRgb(hex) {
@@ -32,7 +34,7 @@ export class Editor {
     host.append(this.canvas);
     this.ctx = this.canvas.getContext("2d");
     this.tool = "brush";
-    this.brushSize = 8; // radius in image pixels
+    this.brushSize = 6; // radius in image pixels: half the diameter, so it may end in .5
     this.protect = false;
     this.tolerance = 18;
     this.opacity = 0.5;
@@ -253,7 +255,12 @@ export class Editor {
       }
       ctx.setLineDash([6, 4]);
       ctx.strokeStyle = "#ffd54a";
-      ctx.strokeRect(x, y, t.rect.w * s, t.rect.h * s);
+      if (t.shape === "polygon") {
+        ctx.beginPath();
+        t.points.forEach(([px, py], k) => (k ? ctx.lineTo(...toS(px, py)) : ctx.moveTo(...toS(px, py))));
+        ctx.closePath();
+        ctx.stroke();
+      } else ctx.strokeRect(x, y, t.rect.w * s, t.rect.h * s);
       ctx.setLineDash([]);
     }
     // Box being dragged
@@ -279,7 +286,7 @@ export class Editor {
       ctx.beginPath();
       this.poly.forEach(([x, y], k) => (k ? ctx.lineTo(...toS(x, y)) : ctx.moveTo(...toS(x, y))));
       if (this.hover) ctx.lineTo(this.hover.sx, this.hover.sy);
-      ctx.strokeStyle = this._classColor(this.activeClass);
+      ctx.strokeStyle = this.tool === "polythreshold" ? "#ffd54a" : this._classColor(this.activeClass);
       ctx.stroke();
       for (const [k, [x, y]] of this.poly.entries()) {
         const [px, py] = toS(x, y);
@@ -311,8 +318,8 @@ export class Editor {
 
   // ------------------------------------------------------------------------ tools
   setTool(name) {
-    if (this.poly.length && name !== "polygon") this.poly = [];
-    if (this.thresholdState && name !== "threshold") this.cancelThreshold();
+    if (this.poly.length && name !== this.tool) this.poly = [];
+    if (this.thresholdState && name !== this.tool) this.cancelThreshold();
     this.tool = name;
     this._updateCursor();
     this.requestDraw();
@@ -356,7 +363,10 @@ export class Editor {
     if (this.cb.onChange) this.cb.onChange("history");
   }
 
+  // Enter, a double-click or a click on the first corner closes the outline. The polygon
+  // threshold tool then previews a threshold inside it; the polygon tool fills it.
   closePolygon(erase = false) {
+    if (this.tool === "polythreshold") return this._closeThresholdPolygon();
     if (this.poly.length < 3) {
       this.poly = [];
       this.requestDraw();
@@ -379,14 +389,39 @@ export class Editor {
     this.requestDraw();
   }
 
-  // Threshold tool: preview state shared with the side panel.
-  _startThreshold(rect) {
+  _closeThresholdPolygon() {
+    if (!this.poly.length) return;
+    const say = (msg) => this.cb.onMessage && this.cb.onMessage(msg);
+    if (this.poly.length < 3) {
+      say("Place at least three corners around the region before closing it.");
+      return;
+    }
+    if (!this.grey) {
+      say("Grey levels are still loading; press Enter again in a moment.");
+      return;
+    }
+    const points = this.poly;
+    this.poly = [];
+    const region = polygonRegion(points, this.width, this.height);
+    if (!region || region.area < MIN_THRESHOLD_AREA) {
+      this.requestDraw();
+      say(`The outline encloses too few pixels. Draw a larger region (at least ${MIN_THRESHOLD_AREA} pixels) inside the image.`);
+      return;
+    }
+    this._startThreshold({ shape: "polygon", points, ...region });
+  }
+
+  // Threshold tools: preview state shared with the side panel. `region` is
+  // {shape: "box", rect} or {shape: "polygon", points, rect, roi, area}; the automatic
+  // threshold and the selection only ever use the pixels inside the region.
+  _startThreshold(region) {
     if (!this.grey) {
       if (this.cb.onMessage) this.cb.onMessage("Grey levels are still loading; try again in a moment.");
       return;
     }
-    const threshold = otsu(this.grey, this.width, rect);
-    this.thresholdState = { rect, threshold, otsu: threshold, dark: true, minSize: 4 };
+    const roi = region.roi || null;
+    const threshold = otsu(this.grey, this.width, region.rect, roi);
+    this.thresholdState = { roi, area: region.rect.w * region.rect.h, ...region, threshold, otsu: threshold, dark: true, minSize: 4 };
     this.updateThreshold({});
   }
 
@@ -394,7 +429,7 @@ export class Editor {
     const t = this.thresholdState;
     if (!t) return;
     Object.assign(t, changes);
-    const { mask, count } = thresholdMask(this.grey, this.width, t.rect, t.threshold, t.dark, t.minSize);
+    const { mask, count } = thresholdMask(this.grey, this.width, t.rect, t.threshold, t.dark, t.minSize, t.roi);
     t.mask = mask;
     t.count = count;
     const c = document.createElement("canvas");
@@ -416,7 +451,7 @@ export class Editor {
     if (!t) return 0;
     const n = this.map.applyMask(t.mask, t.rect, this.activeClass, this._rule(this.activeClass));
     this.thresholdState = null;
-    this._commit("box threshold");
+    this._commit(t.shape === "polygon" ? "polygon threshold" : "box threshold");
     if (this.cb.onThreshold) this.cb.onThreshold(null);
     return n;
   }
@@ -452,7 +487,7 @@ export class Editor {
       if (this.cb.onHover) this.cb.onHover(null);
     });
     c.addEventListener("dblclick", (e) => {
-      if (this.tool === "polygon" && !this.readOnly) {
+      if ((this.tool === "polygon" || this.tool === "polythreshold") && !this.readOnly && this.poly.length) {
         e.preventDefault();
         this.poly.pop(); // the second click of the double-click added a duplicate corner
         this.closePolygon(e.shiftKey);
@@ -527,6 +562,24 @@ export class Editor {
           const [fx, fy] = this.poly[0];
           if (Math.hypot((fx - p.x) * this.scale, (fy - p.y) * this.scale) < 10) {
             this.closePolygon(erase);
+            return;
+          }
+        }
+        this.poly.push([p.x, p.y]);
+        this.requestDraw();
+        break;
+      }
+      case "polythreshold": {
+        if (this.thresholdState) {
+          // A stray click must not throw away a tuned preview (e.detail > 1: the rest of a
+          // double-click that just closed the outline).
+          if (e.detail < 2 && this.cb.onMessage) this.cb.onMessage("Apply the preview (Enter) or cancel it (Esc) before outlining a new region.");
+          return;
+        }
+        if (this.poly.length >= 3) {
+          const [fx, fy] = this.poly[0];
+          if (Math.hypot((fx - p.x) * this.scale, (fy - p.y) * this.scale) < 10) {
+            this._closeThresholdPolygon();
             return;
           }
         }
@@ -634,14 +687,15 @@ export class Editor {
       const y0 = Math.max(0, Math.floor(Math.min(d.start.y, d.cur.y)));
       const x1 = Math.min(this.width, Math.ceil(Math.max(d.start.x, d.cur.x)));
       const y1 = Math.min(this.height, Math.ceil(Math.max(d.start.y, d.cur.y)));
-      if (x1 - x0 >= 4 && y1 - y0 >= 4) this._startThreshold({ x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+      if (x1 - x0 >= 4 && y1 - y0 >= 4) this._startThreshold({ shape: "box", rect: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } });
       else if (this.cb.onMessage) this.cb.onMessage("Drag a larger box (at least 4 x 4 pixels).");
       this.requestDraw();
     }
   }
 }
 
+// A slider takes no text, so shortcuts keep working right after dragging one.
 export function isTyping(e) {
   const t = e.target;
-  return t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
+  return t && ((t.tagName === "INPUT" && t.type !== "range") || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
 }

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { History, LabelMap, otsu, thresholdMask } from "../../src/online_annotator/web/static/js/editor/labelmap.js";
+import { History, LabelMap, otsu, polygonRegion, thresholdMask } from "../../src/online_annotator/web/static/js/editor/labelmap.js";
 
 const ALL = LabelMap.writeRule(1, false, 1);
 
@@ -14,6 +14,17 @@ test("disc paints exact integer labels only inside the radius", () => {
   assert.equal(m.at(5, 5), 3);
   assert.equal(m.at(0, 0), 0);
   assert.equal(m.counts()[3], 12); // pixel centres within r=2 of (5,5)
+});
+
+test("a brush diameter covers the same pixels wherever the pointer is", () => {
+  const rule = LabelMap.writeRule(1, false, 1);
+  for (const [diameter, expected] of [[1, 1], [2, 4], [3, 9], [4, 12]]) {
+    for (const [x, y] of [[4, 4], [4.5, 4.5], [4.99, 4.01], [4.3, 4.7]]) {
+      const m = new LabelMap(10, 10);
+      m.paintDisc(x, y, diameter / 2, 1, rule);
+      assert.equal(m.counts()[1], expected, `diameter ${diameter} at (${x}, ${y})`);
+    }
+  }
 });
 
 test("protect mode never overwrites another class", () => {
@@ -31,6 +42,32 @@ test("polygon fill samples pixel centres (axis-aligned square)", () => {
   assert.equal(n, 16);
   assert.equal(m.at(2, 2), 1);
   assert.equal(m.at(6, 6), 0);
+});
+
+test("polygon region selects exactly the pixels a polygon fill writes", () => {
+  const shapes = [
+    [[2, 2], [6, 2], [6, 6], [2, 6]],
+    [[1.3, 0.2], [17.8, 3.1], [9.4, 14.6]], // triangle
+    [[0, 0], [18, 14], [18, 0], [0, 14]], // self-intersecting bow tie (even-odd)
+    [[-5, -5], [30, -2], [12, 40]], // corners outside the image
+    [[3, 3], [12, 4], [7, 7], [12, 11], [3, 11]], // concave
+  ];
+  for (const points of shapes) {
+    const m = new LabelMap(20, 15);
+    const filled = m.fillPolygon(points, 1, ALL);
+    const region = polygonRegion(points, 20, 15);
+    assert.equal(region.area, filled);
+    for (let y = 0; y < 15; y++) {
+      for (let x = 0; x < 20; x++) {
+        const { rect, roi } = region;
+        const inRect = x >= rect.x && y >= rect.y && x < rect.x + rect.w && y < rect.y + rect.h;
+        const inside = inRect && roi[(y - rect.y) * rect.w + (x - rect.x)] === 1;
+        assert.equal(inside, m.at(x, y) === 1, `(${x}, ${y}) of ${JSON.stringify(points)}`);
+      }
+    }
+  }
+  assert.equal(polygonRegion([[2.1, 2.1], [2.4, 2.1], [2.2, 2.3]], 20, 15), null); // no pixel centre inside
+  assert.equal(polygonRegion([[0, 0], [5, 5]], 20, 15), null);
 });
 
 test("bucket fill stays inside a closed outline", () => {
@@ -63,6 +100,31 @@ test("otsu separates a bimodal histogram and threshold mask drops specks", () =>
   assert.ok(t >= 30 && t < 200);
   const { count } = thresholdMask(grey, 10, rect, t, true, 2);
   assert.equal(count, 30);
+});
+
+test("polygon threshold sees and selects only the pixels inside the outline", () => {
+  // 20 x 10 image: left half is a dark feature (40) on grey matrix (120); the right half is
+  // a very bright scale bar (250) that would drag a box threshold upwards.
+  const w = 20, hgt = 10;
+  const grey = new Uint8Array(w * hgt).fill(120);
+  for (let y = 3; y < 7; y++) for (let x = 2; x < 8; x++) grey[y * w + x] = 40;
+  for (let y = 0; y < hgt; y++) for (let x = 12; x < 20; x++) grey[y * w + x] = 250;
+  const region = polygonRegion([[0, 0], [10, 0], [10, 10], [0, 10]], w, hgt);
+  const t = otsu(grey, w, region.rect, region.roi);
+  assert.ok(t >= 40 && t < 120, `threshold ${t} separates feature from matrix`);
+  const box = { x: 0, y: 0, w, h: hgt };
+  assert.ok(otsu(grey, w, box) >= 120, "the whole-box threshold is pulled up by the bright bar");
+  const { count } = thresholdMask(grey, w, region.rect, t, true, 1, region.roi);
+  assert.equal(count, 24);
+
+  // A triangle cutting through the feature: nothing outside it is ever selected.
+  const tri = polygonRegion([[0, 0], [9, 0], [0, 9]], w, hgt);
+  const cut = thresholdMask(grey, w, tri.rect, 60, true, 1, tri.roi);
+  for (let k = 0; k < cut.mask.length; k++) if (cut.mask[k]) assert.equal(tri.roi[k], 1);
+  assert.ok(cut.count > 0 && cut.count < 24);
+  // Slivers the cut leaves behind are removed like any other speck.
+  const noSpecks = thresholdMask(grey, w, tri.rect, 60, true, 50, tri.roi);
+  assert.equal(noSpecks.count, 0);
 });
 
 test("remove specks and fill holes", () => {

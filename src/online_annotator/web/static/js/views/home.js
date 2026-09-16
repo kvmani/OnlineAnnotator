@@ -122,7 +122,7 @@ function quickStart() {
     h("div", { class: "quickstart-head" }, h("h2", {}, "How it works"), close),
     h("ol", { class: "steps" },
       step(1, "Open a project and press Annotate next", "You get the next image nobody else is working on. It is reserved for you while it is open."),
-      step(2, "Label the pixels", "Pick a class, then paint with the Brush or use Polygon, Lasso, Magic wand or Box threshold. Work is saved automatically."),
+      step(2, "Label the pixels", "Pick a class, then paint with the Brush or use Polygon, Lasso, Magic wand, Box or Polygon threshold. Work is saved automatically."),
       step(3, "Submit for review", "Someone else checks it and approves it or returns it with a comment. Only approved images become training data."),
       step(4, "Review other people's work", "Switch to Review at the top of the page and press Review next. Correct small mistakes, then approve or request changes. Nobody reviews their own submissions."),
       step(5, "Export the dataset", "Download a ZIP ready for HydrideSegmentation or other training code, with full provenance.")),

@@ -49,8 +49,18 @@ export class LabelMap {
     return rule;
   }
 
+  // `r` is half the brush diameter. The centre is snapped so a diameter always covers the
+  // same pixel pattern wherever the pointer is: odd diameters centre on a pixel, even ones on
+  // a pixel corner. A 1 px brush is exactly one pixel, a 2 px brush a 2 x 2 square.
   paintDisc(cx, cy, r, value, rule) {
     const { width: w, height: h, data } = this;
+    if (Math.round(r * 2) % 2) {
+      cx = Math.floor(cx) + 0.5;
+      cy = Math.floor(cy) + 0.5;
+    } else {
+      cx = Math.round(cx);
+      cy = Math.round(cy);
+    }
     const x0 = Math.max(0, Math.floor(cx - r)), x1 = Math.min(w - 1, Math.ceil(cx + r));
     const y0 = Math.max(0, Math.floor(cy - r)), y1 = Math.min(h - 1, Math.ceil(cy + r));
     const r2 = r * r;
@@ -82,44 +92,25 @@ export class LabelMap {
     }
   }
 
-  // Even-odd scanline fill, sampling pixel centres. `points` = [[x, y], ...] in image px.
+  // Fill the inside of a polygon (see polygonSpans). `points` = [[x, y], ...] in image px.
   fillPolygon(points, value, rule) {
-    if (points.length < 3) return 0;
     const { width: w, height: h, data } = this;
-    let minY = Infinity, maxY = -Infinity, minX = Infinity, maxX = -Infinity;
-    for (const [x, y] of points) {
-      minY = Math.min(minY, y);
-      maxY = Math.max(maxY, y);
-      minX = Math.min(minX, x);
-      maxX = Math.max(maxX, x);
-    }
-    const y0 = Math.max(0, Math.floor(minY)), y1 = Math.min(h - 1, Math.ceil(maxY));
-    const n = points.length;
-    const xs = [];
-    let count = 0;
-    for (let y = y0; y <= y1; y++) {
-      const sy = y + 0.5;
-      xs.length = 0;
-      for (let i = 0, j = n - 1; i < n; j = i++) {
-        const [xi, yi] = points[i];
-        const [xj, yj] = points[j];
-        if ((yi > sy) !== (yj > sy)) xs.push(xi + ((sy - yi) / (yj - yi)) * (xj - xi));
-      }
-      xs.sort((a, b) => a - b);
-      for (let k = 0; k + 1 < xs.length; k += 2) {
-        const xa = Math.max(0, Math.ceil(xs[k] - 0.5));
-        const xb = Math.min(w - 1, Math.floor(xs[k + 1] - 0.5));
-        const row = y * w;
-        for (let x = xa; x <= xb; x++) {
-          const i = row + x;
-          if (data[i] !== value && rule[data[i]]) {
-            data[i] = value;
-            count++;
-          }
+    let count = 0, x0 = w, y0 = h, x1 = -1, y1 = -1;
+    polygonSpans(points, w, h, (y, xa, xb) => {
+      const row = y * w;
+      for (let x = xa; x <= xb; x++) {
+        const i = row + x;
+        if (data[i] !== value && rule[data[i]]) {
+          data[i] = value;
+          count++;
+          if (x < x0) x0 = x;
+          if (x > x1) x1 = x;
+          if (y < y0) y0 = y;
+          if (y > y1) y1 = y;
         }
       }
-    }
-    if (count) this.markDirty(Math.floor(minX), y0, Math.ceil(maxX), y1);
+    });
+    if (count) this.markDirty(x0, y0, x1, y1);
     return count;
   }
 
@@ -271,16 +262,76 @@ export class LabelMap {
   }
 }
 
-// Otsu's threshold over the grey levels inside a rectangle.
-export function otsu(grey, width, rect) {
-  const hist = new Float64Array(256);
-  for (let y = rect.y; y < rect.y + rect.h; y++) {
-    const row = y * width;
-    for (let x = rect.x; x < rect.x + rect.w; x++) hist[grey[row + x]]++;
+// Pixels inside a polygon: even-odd rule, sampling pixel centres, clipped to the image.
+// Calls span(y, xa, xb) for every inclusive run of inside pixels. Polygon, lasso and polygon
+// threshold all rasterise through here, so one outline always means the same pixels.
+export function polygonSpans(points, width, height, span) {
+  const n = points.length;
+  if (n < 3) return;
+  let minY = Infinity, maxY = -Infinity;
+  for (const [, y] of points) {
+    if (y < minY) minY = y;
+    if (y > maxY) maxY = y;
   }
-  const total = rect.w * rect.h;
-  let sum = 0;
-  for (let t = 0; t < 256; t++) sum += t * hist[t];
+  const y0 = Math.max(0, Math.floor(minY)), y1 = Math.min(height - 1, Math.ceil(maxY));
+  const xs = [];
+  for (let y = y0; y <= y1; y++) {
+    const sy = y + 0.5;
+    xs.length = 0;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const [xi, yi] = points[i];
+      const [xj, yj] = points[j];
+      if ((yi > sy) !== (yj > sy)) xs.push(xi + ((sy - yi) / (yj - yi)) * (xj - xi));
+    }
+    xs.sort((a, b) => a - b);
+    for (let k = 0; k + 1 < xs.length; k += 2) {
+      const xa = Math.max(0, Math.ceil(xs[k] - 0.5));
+      const xb = Math.min(width - 1, Math.floor(xs[k + 1] - 0.5));
+      if (xa <= xb) span(y, xa, xb);
+    }
+  }
+}
+
+// Region of interest for the polygon threshold: the bounding rectangle of the inside pixels,
+// a 0/1 mask over that rectangle and the number of inside pixels. null when nothing is inside.
+export function polygonRegion(points, width, height) {
+  const spans = [];
+  let x0 = width, y0 = height, x1 = -1, y1 = -1;
+  polygonSpans(points, width, height, (y, xa, xb) => {
+    spans.push(y, xa, xb);
+    if (xa < x0) x0 = xa;
+    if (xb > x1) x1 = xb;
+    if (y < y0) y0 = y;
+    if (y > y1) y1 = y;
+  });
+  if (!spans.length) return null;
+  const rect = { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+  const roi = new Uint8Array(rect.w * rect.h);
+  let area = 0;
+  for (let k = 0; k < spans.length; k += 3) {
+    const row = (spans[k] - y0) * rect.w - x0;
+    for (let x = spans[k + 1]; x <= spans[k + 2]; x++) roi[row + x] = 1;
+    area += spans[k + 2] - spans[k + 1] + 1;
+  }
+  return { rect, roi, area };
+}
+
+// Otsu's threshold over the grey levels inside a rectangle, or only over the pixels of
+// `roi` (a 0/1 mask over the rectangle) when one is given.
+export function otsu(grey, width, rect, roi = null) {
+  const hist = new Float64Array(256);
+  for (let yy = 0; yy < rect.h; yy++) {
+    const row = (rect.y + yy) * width + rect.x;
+    for (let xx = 0; xx < rect.w; xx++) {
+      if (roi && !roi[yy * rect.w + xx]) continue;
+      hist[grey[row + xx]]++;
+    }
+  }
+  let total = 0, sum = 0;
+  for (let t = 0; t < 256; t++) {
+    total += hist[t];
+    sum += t * hist[t];
+  }
   let sumB = 0, wB = 0, best = 0, threshold = 127;
   for (let t = 0; t < 256; t++) {
     wB += hist[t];
@@ -298,14 +349,18 @@ export function otsu(grey, width, rect) {
   return threshold;
 }
 
-// Candidate mask for the box-threshold tool, with small specks removed.
-export function thresholdMask(grey, width, rect, threshold, dark, minSize) {
+// Candidate mask for the threshold tools, with small specks removed. With a `roi` only its
+// pixels can be selected. Features crossing its edge are cut there before speck removal, so a
+// sliver left by the cut is dropped exactly like any other piece under `minSize`.
+export function thresholdMask(grey, width, rect, threshold, dark, minSize, roi = null) {
   const mask = new Uint8Array(rect.w * rect.h);
   for (let yy = 0; yy < rect.h; yy++) {
     const row = (rect.y + yy) * width + rect.x;
     for (let xx = 0; xx < rect.w; xx++) {
+      const k = yy * rect.w + xx;
+      if (roi && !roi[k]) continue;
       const v = grey[row + xx];
-      mask[yy * rect.w + xx] = dark ? (v <= threshold ? 1 : 0) : (v > threshold ? 1 : 0);
+      mask[k] = dark ? (v <= threshold ? 1 : 0) : (v > threshold ? 1 : 0);
     }
   }
   if (minSize > 1) {

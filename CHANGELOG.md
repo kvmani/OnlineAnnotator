@@ -5,6 +5,39 @@ the running version is `src/online_annotator/_version.py`.
 
 ## [Unreleased]
 
+## [2.2.0] — 2026-09-16
+
+Threshold inside any outline, and exact tool values without leaving the image. No database,
+label-format or export change.
+
+### Added
+- **Polygon threshold tool (R).** Click the corners of any region and close it (double-click,
+  Enter or the first corner): Otsu's threshold is computed from the pixels inside the outline only
+  and previewed there, with the box threshold's dark/bright choice, speck filter, Apply (Enter)
+  and Cancel (Esc). A nearby scale bar, grain boundary or differently lit area no longer pulls the
+  threshold off, and slanted platelets can be followed without a box full of matrix. The outline
+  uses the exact pixel rule of the Polygon and Lasso tools; features crossing it are cut there.
+  The panel shows selected / inside pixels and warns when most of the region is selected (an
+  outline traced too tightly leaves Otsu no background). While a preview is open a stray click
+  keeps it instead of starting a new outline. Undo step "polygon threshold".
+- **Type exact tool values.** Brush/eraser diameter, wand tolerance and the previewed threshold
+  each have a number box beside the slider; Enter applies (clamped to the allowed range,
+  unreadable input reverts) and hands the keyboard back to the image.
+- **`[` and `]` change the active tool's value**: brush and eraser size, wand tolerance, or the
+  previewed threshold; with Shift a big step (halve/double the size, ±10 otherwise). They match
+  the physical keys, so German, French and Nordic layouts (where the characters need AltGr) work.
+
+### Changed
+- Brush and eraser size is a **diameter from 1 to 160 px** (was a radius, so only even diameters
+  2–160). The disc snaps to the pixel grid so a diameter always covers the same pixels: a 1 px
+  brush changes exactly one pixel. The size saved by earlier releases is carried over.
+- Shortcuts keep working right after dragging a slider (a focused slider no longer counts as
+  typing).
+
+### Fixed
+- Dragging the box-threshold slider rebuilt the side panel on every movement, replacing the
+  slider under the pointer; the panel now updates in place.
+
 ## [2.1.0] — 2026-09-15
 
 Upload the mask you already have: the import says what it detected, how it will read the file and

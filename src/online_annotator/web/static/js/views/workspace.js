@@ -7,6 +7,16 @@ import { app, inReview, savePref } from "../state.js";
 import {
   STATUS_HELP, STATUS_LABELS, clear, confirmDialog, field, fmtDate, fmtPct, fmtRelative, h, helpTip, icon, modal, statusBadge, toast,
 } from "../ui.js";
+
+const BRUSH_MIN = 1; // brush and eraser diameter in image pixels
+const BRUSH_MAX = 160;
+const TOLERANCE_MIN = 1;
+const TOLERANCE_MAX = 100;
+const MOSTLY_SELECTED = 0.7; // above this share of a threshold region, warn that Otsu lacks background
+
+function clampInt(value, min, max) {
+  return Math.max(min, Math.min(max, Math.round(Number(value) || 0)));
+}
 import { startNext } from "./home.js";
 import { analysisView, importSummary, maskImportControls, previewer } from "./maskimport.js";
 
@@ -42,7 +52,9 @@ class Workspace {
     this.destroyed = false;
     const prefs = app.prefs;
     this.prefs = {
-      tool: prefs.tool || "brush", brush: prefs.brush || 6, tolerance: prefs.tolerance || 18,
+      // Brush size is a diameter since 2.2.0; `brush` (a radius) is what older releases saved.
+      tool: TOOLS[prefs.tool] ? prefs.tool : "brush", brushDiameter: prefs.brushDiameter || (prefs.brush ? prefs.brush * 2 : 12),
+      tolerance: prefs.tolerance || 18,
       opacity: prefs.opacity ?? 0.5, protect: Boolean(prefs.protect),
     };
   }
@@ -72,7 +84,7 @@ class Workspace {
       },
     });
     this.editor.setClasses(this.classes);
-    this.editor.brushSize = this.prefs.brush;
+    this.editor.brushSize = clampInt(this.prefs.brushDiameter, BRUSH_MIN, BRUSH_MAX) / 2;
     this.editor.tolerance = this.prefs.tolerance;
     this.editor.opacity = this.prefs.opacity;
     this.editor.protect = this.prefs.protect;
@@ -446,8 +458,52 @@ class Workspace {
     return this.section("Tool options", null, this.toolOptions);
   }
 
+  // A slider with a number box beside it: drag for speed, type for an exact value. Both stay
+  // in step. A typed value is applied on Enter or when the box loses focus (out-of-range values
+  // are clamped, anything unreadable reverts); Enter and Esc hand the keyboard back to the image
+  // so tool shortcuts work again straight away.
+  numberSlider({ label, name, min, max, value, unit = "", help = null, onChange }) {
+    const slider = h("input", { type: "range", min, max, step: 1, value, "aria-label": name });
+    const box = h("input", { type: "number", min, max, step: 1, value, class: "num", "aria-label": unit ? `${name} in ${unit === "px" ? "pixels" : unit}` : `${name} value` });
+    const set = (v) => {
+      slider.value = v;
+      if (document.activeElement !== box) box.value = v;
+    };
+    slider.addEventListener("input", () => {
+      box.value = slider.value;
+      onChange(Number(slider.value));
+    });
+    const commit = () => {
+      const typed = box.value.trim() === "" ? NaN : Number(box.value);
+      if (!Number.isFinite(typed)) {
+        box.value = slider.value;
+        return;
+      }
+      const v = clampInt(typed, min, max);
+      box.value = v;
+      slider.value = v;
+      onChange(v);
+    };
+    box.addEventListener("change", commit);
+    box.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== "Escape") return;
+      e.preventDefault();
+      if (e.key === "Enter") commit();
+      else box.value = slider.value;
+      this.editor.canvas.focus({ preventScroll: true });
+    });
+    const el = h("div", { class: "slider" }, h("span", {}, label, help ? [" ", helpTip(help)] : null), slider,
+      h("span", { class: "slider-num" }, box, unit ? h("span", { class: "muted" }, unit) : null));
+    return { el, set };
+  }
+
   renderToolOptions(thresholdState) {
     if (!this.toolOptions) return;
+    // Every change to a preview re-reports it; update the open panel in place so a slider
+    // being dragged or a number being typed is not replaced under the pointer.
+    const panel = this.thresholdPanel;
+    if (thresholdState && panel && panel.state === thresholdState && panel.el.isConnected) return panel.update();
+    this.thresholdPanel = null;
     const box = clear(this.toolOptions);
     const tool = this.editor.tool;
     if (!this.editable) {
@@ -455,46 +511,58 @@ class Workspace {
       return;
     }
     if (tool === "brush" || tool === "eraser") {
-      const out = h("output", {}, `${this.editor.brushSize * 2} px`);
-      const slider = h("input", { type: "range", min: 1, max: 80, value: this.editor.brushSize, "aria-label": "Brush size" });
-      slider.addEventListener("input", () => this.setBrush(Number(slider.value)));
-      this.brushSlider = { slider, out };
-      box.append(h("label", { class: "slider" }, h("span", {}, "Diameter"), slider, out), h("p", { class: "small muted" }, "[ and ] change the size. Zoom in for fine edges."));
-    } else if (tool === "wand") {
-      const out = h("output", {}, this.editor.tolerance);
-      const slider = h("input", { type: "range", min: 1, max: 100, value: this.editor.tolerance, "aria-label": "Tolerance" });
-      slider.addEventListener("input", () => {
-        this.editor.tolerance = Number(slider.value);
-        out.textContent = slider.value;
-        savePref("tolerance", this.editor.tolerance);
+      this.sizeControl = this.numberSlider({
+        label: "Diameter", name: "Brush diameter", min: BRUSH_MIN, max: BRUSH_MAX, value: this.brushDiameter(), unit: "px",
+        help: "Brush and eraser share this size, in image pixels (not screen pixels). A 1 px brush changes exactly one pixel. [ and ] make it smaller or larger; Shift+[ and Shift+] halve or double it.",
+        onChange: (d) => this.setBrush(d),
       });
-      box.append(h("label", { class: "slider" }, h("span", {}, "Tolerance ", helpTip("The wand takes every connected pixel at least as dark as the one you clicked (or as bright, for a bright feature). Tolerance allows that many grey levels (0-255) of extra slack at faint edges. Too much spreads into the matrix; too little misses faint tips.")), slider, out));
-    } else if (tool === "threshold") {
+      box.append(this.sizeControl.el, h("p", { class: "small muted" }, "Type a size or use [ and ]. Zoom in for fine edges."));
+    } else if (tool === "wand") {
+      this.toleranceControl = this.numberSlider({
+        label: "Tolerance", name: "Tolerance", min: TOLERANCE_MIN, max: TOLERANCE_MAX, value: this.editor.tolerance,
+        help: "The wand takes every connected pixel at least as dark as the one you clicked (or as bright, for a bright feature). Tolerance allows that many grey levels (0-255) of extra slack at faint edges. Too much spreads into the matrix; too little misses faint tips. [ and ] change it by 1, with Shift by 10.",
+        onChange: (v) => this.setTolerance(v),
+      });
+      box.append(this.toleranceControl.el);
+    } else if (tool === "threshold" || tool === "polythreshold") {
+      const polygon = tool === "polythreshold";
       if (!thresholdState) {
-        box.append(h("p", { class: "small" }, "Drag a box over a region with dark (or bright) features. A threshold is chosen automatically (Otsu's method) and previewed in yellow-outlined colour."));
+        box.append(h("p", { class: "small" }, polygon
+          ? "Click corners around a region with dark (or bright) features and close the outline (double-click, Enter or the first corner). A threshold is chosen automatically from the pixels inside it (Otsu's method) and previewed; nothing outside the outline is changed."
+          : "Drag a box over a region with dark (or bright) features. A threshold is chosen automatically (Otsu's method) and previewed in yellow-outlined colour."));
         return;
       }
       const t = thresholdState;
-      const out = h("output", {}, t.threshold);
-      const slider = h("input", { type: "range", min: 0, max: 255, value: t.threshold, "aria-label": "Threshold" });
-      slider.addEventListener("input", () => {
-        out.textContent = slider.value;
-        this.editor.updateThreshold({ threshold: Number(slider.value) });
+      const where = t.shape === "polygon" ? "outline" : "box";
+      const threshold = this.numberSlider({
+        label: "Threshold", name: "Threshold", min: 0, max: 255, value: t.threshold,
+        help: `Automatic (Otsu) value for this ${where}: ${t.otsu}. Move it until the preview matches the features. [ and ] nudge it by 1, with Shift by 10.` +
+          (t.shape === "polygon" ? " Only the pixels inside the outline decide the automatic value and can be labelled; a feature crossing the outline is cut along it." : ""),
+        onChange: (v) => this.editor.updateThreshold({ threshold: v }),
       });
-      const dark = h("select", {}, h("option", { value: "dark" }, "Features darker than threshold"), h("option", { value: "bright" }, "Features brighter than threshold"));
-      dark.value = t.dark ? "dark" : "bright";
+      const dark = h("select", { "aria-label": "Feature brightness" }, h("option", { value: "dark" }, "Features darker than threshold"), h("option", { value: "bright" }, "Features brighter than threshold"));
       dark.addEventListener("change", () => this.editor.updateThreshold({ dark: dark.value === "dark" }));
-      const speck = h("input", { type: "number", min: 1, max: 5000, value: t.minSize, class: "num" });
+      const speck = h("input", { type: "number", min: 1, max: 5000, value: t.minSize, class: "num", "aria-label": "Ignore specks under (pixels)" });
       speck.addEventListener("change", () => this.editor.updateThreshold({ minSize: Math.max(1, Number(speck.value) || 1) }));
+      const count = h("p", { class: "small" });
+      const warning = h("p", { class: "alert alert-warn small", role: "status" },
+        `Most of the ${where} is selected. The automatic threshold needs some background to compare with: include some surrounding matrix, or set the threshold by hand.`);
       const apply = h("button", { class: "btn btn-primary btn-small" }, "Apply (Enter)");
       apply.addEventListener("click", () => this.applyThreshold());
       const cancel = h("button", { class: "btn btn-small" }, "Cancel (Esc)");
       cancel.addEventListener("click", () => this.editor.cancelThreshold());
-      box.append(
-        h("label", { class: "slider" }, h("span", {}, "Threshold ", helpTip(`Automatic (Otsu) value for this box: ${t.otsu}. Move it until the preview matches the features.`)), slider, out),
-        dark, h("label", { class: "inline-field small" }, "Ignore specks under", speck, "px"),
-        h("p", { class: "small" }, h("strong", {}, t.count.toLocaleString()), " pixels selected in the box."),
-        h("div", { class: "row" }, apply, cancel));
+      const el = h("div", { class: "threshold-panel" }, threshold.el, dark, h("label", { class: "inline-field small" }, "Ignore specks under", speck, "px"),
+        count, warning, h("div", { class: "row" }, apply, cancel));
+      const update = () => {
+        threshold.set(t.threshold);
+        dark.value = t.dark ? "dark" : "bright";
+        if (document.activeElement !== speck) speck.value = t.minSize;
+        count.replaceChildren(h("strong", {}, t.count.toLocaleString()), ` of ${t.area.toLocaleString()} pixels selected in the ${where}.`);
+        warning.hidden = !(t.area && t.count / t.area > MOSTLY_SELECTED);
+      };
+      update();
+      box.append(el);
+      this.thresholdPanel = { state: t, el, update };
     } else if (tool === "polygon") {
       box.append(h("p", { class: "small" }, "Click corners around a feature. Close with a double-click, Enter, or by clicking the first (yellow) corner. Backspace removes a corner; Esc cancels."));
     } else if (tool === "lasso") {
@@ -506,15 +574,38 @@ class Workspace {
     }
   }
 
-  setBrush(radius) {
-    radius = Math.max(1, Math.min(80, Math.round(radius)));
-    this.editor.brushSize = radius;
-    savePref("brush", radius);
-    if (this.brushSlider && this.brushSlider.slider.isConnected) {
-      this.brushSlider.slider.value = radius;
-      this.brushSlider.out.textContent = `${radius * 2} px`;
-    }
+  brushDiameter() {
+    return Math.round(this.editor.brushSize * 2);
+  }
+
+  setBrush(diameter) {
+    const d = clampInt(diameter, BRUSH_MIN, BRUSH_MAX);
+    this.editor.brushSize = d / 2;
+    savePref("brushDiameter", d);
+    if (this.sizeControl && this.sizeControl.el.isConnected) this.sizeControl.set(d);
     this.editor.requestDraw();
+  }
+
+  setTolerance(value) {
+    const v = clampInt(value, TOLERANCE_MIN, TOLERANCE_MAX);
+    this.editor.tolerance = v;
+    savePref("tolerance", v);
+    if (this.toleranceControl && this.toleranceControl.el.isConnected) this.toleranceControl.set(v);
+  }
+
+  // [ and ] change the active tool's main value: brush/eraser diameter, wand tolerance, or
+  // the threshold being previewed. Shift makes the step big.
+  nudgeToolValue(direction, big) {
+    const ed = this.editor;
+    if (!this.editable) return;
+    if (ed.thresholdState) {
+      ed.updateThreshold({ threshold: clampInt(ed.thresholdState.threshold + direction * (big ? 10 : 1), 0, 255) });
+    } else if (ed.tool === "brush" || ed.tool === "eraser") {
+      const d = this.brushDiameter();
+      this.setBrush(big ? (direction > 0 ? d * 2 : d / 2) : d + direction * Math.max(1, Math.round(d * 0.15)));
+    } else if (ed.tool === "wand") {
+      this.setTolerance(ed.tolerance + direction * (big ? 10 : 1));
+    }
   }
 
   applyThreshold() {
@@ -1042,6 +1133,13 @@ class Workspace {
       ed.popPolygonPoint();
       return;
     }
+    // The physical [ and ] keys, so layouts where the characters need AltGr (German, French,
+    // Nordic) work too; the characters themselves (and { }) cover remapped keyboards.
+    const nudge = e.code === "BracketLeft" || key === "[" || key === "{" ? -1 : e.code === "BracketRight" || key === "]" || key === "}" ? 1 : 0;
+    if (nudge) {
+      e.preventDefault();
+      return this.nudgeToolValue(nudge, e.shiftKey || key === "{" || key === "}");
+    }
     const lower = key.toLowerCase();
     const tool = Object.entries(TOOLS).find(([, t]) => t.key.toLowerCase() === lower);
     if (tool && !e.shiftKey) {
@@ -1053,8 +1151,6 @@ class Workspace {
       if (c) this.selectClass(c.index);
       return;
     }
-    if (key === "[") return this.setBrush(ed.brushSize - Math.max(1, Math.round(ed.brushSize * 0.15)));
-    if (key === "]") return this.setBrush(ed.brushSize + Math.max(1, Math.round(ed.brushSize * 0.15)));
     if (lower === "h") return this.toggleOverlay(!ed.showOverlay);
     if (lower === "o") {
       this.outlineBox.checked = !ed.outline;

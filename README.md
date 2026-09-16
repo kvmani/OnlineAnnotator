@@ -9,7 +9,7 @@ Part of the office scientific-tools platform (`ml_server`); first customer:
 ## What it does
 
 - **Annotate** — brush, eraser, polygon, lasso, a microstructure-aware magic wand, an
-  Otsu box threshold, fill, speck removal and hole filling; unlimited classes per project;
+  Otsu box and polygon threshold, fill, speck removal and hole filling; unlimited classes per project;
   undo/redo; zoom, pan, contrast and outline views; autosave. What you see is exactly what is
   saved: labels are integer class values per pixel, never blended colours.
 - **Review** — every user both annotates and reviews, switching with an **Annotate / Review**

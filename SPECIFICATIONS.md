@@ -124,8 +124,11 @@ counts shown to a user (`queue`) exclude them in the same way.
   on own pending submissions, bulk split/assign, upload with drag-and-drop and progress, mask
   import in Annotate mode), Classes & guidelines, Export dataset, Activity, Settings (admin).
 - **Workspace**: tools Pan (V), Brush (B), Eraser (E), Polygon (P), Lasso (L), Magic wand (W),
-  Box threshold (T), Fill (G); Shift erases with any tool; Alt+click picks a class; keys 1–9
-  select classes; `[`/`]` brush size; undo/redo (patch-based, ≥100 steps); zoom at cursor,
+  Box threshold (T), Polygon threshold (R), Fill (G); Shift erases with any tool; Alt+click
+  picks a class; keys 1–9 select classes; tool values (brush/eraser diameter 1–160 px, shared;
+  wand tolerance; threshold) have a slider and a number box, and `[`/`]` change the active
+  tool's value (Shift: halve/double the diameter, ±10 otherwise; matched on the physical key so
+  non-US layouts work); undo/redo (patch-based, ≥100 steps); zoom at cursor,
   Space/middle/right-drag pan; fit (F); show/hide labels (H); outlines (O); brightness,
   contrast, invert (display only); protect-other-classes mode; speck removal and hole filling;
   live per-class coverage; hint bar for the active tool; banners for every lease, review and
@@ -138,8 +141,18 @@ counts shown to a user (`queue`) exclude them in the same way.
 - **Magic wand**: classifies the seed as dark/bright against its 31×31 neighbourhood mean and
   grows 4-connected over pixels at least as dark (bright) as the seed plus `tolerance`; refuses
   regions over 25 % of the image.
+- **Brush and eraser**: a diameter in image pixels; the disc centre snaps (odd diameters to a
+  pixel centre, even ones to a pixel corner) so a diameter always covers the same pixels, and a
+  1 px brush changes exactly one pixel.
 - **Box threshold**: Otsu threshold of the box's grey levels, dark/bright choice, speck
   filter, live preview, apply/cancel.
+- **Polygon threshold**: the same, inside a clicked polygon. The outline is rasterised by the
+  rule the Polygon and Lasso tools fill with (even-odd, pixel centres, clipped to the image), and
+  only those pixels enter the Otsu histogram and can be selected; the selection is cut at the
+  outline before speck removal. Outlines enclosing fewer than 16 pixels are refused. The panel
+  shows selected/inside pixels and warns when more than 70 % of the region is selected (too
+  little background for Otsu). While a preview is open, clicks do not start a new outline;
+  Enter applies, Esc cancels. The undo step is "polygon threshold".
 - **Help**: `(?)` popovers at decisions, Help centre (`#/help`, also `/help`) including
   "Annotate and Review modes", keyboard sheet (`?`).
 

@@ -39,7 +39,7 @@ DEMO_GUIDELINES = """1. Label every hydride platelet with class 1 (Hydride), inc
 2. Leave grain boundaries and polishing scratches as background.
 3. Pores and cracks are class 2.
 4. When unsure, leave the pixel unlabelled and write a note on submission.
-5. Use the Box threshold tool (T) for dense regions, then clean up with the brush."""
+5. Use the Box threshold (T) or Polygon threshold (R) tool for dense regions, then clean up with the brush."""
 
 
 def synthetic_micrograph(seed: int, width: int = 640, height: int = 480) -> bytes:

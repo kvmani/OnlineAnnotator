@@ -136,6 +136,10 @@ textarea { resize: vertical; }
 .indent { margin-left: 26px; }
 .slider { display: grid; grid-template-columns: 96px 1fr auto; gap: 8px; align-items: center; font-size: 12.5px; }
 .slider output { font-family: var(--mono); font-size: 12px; min-width: 42px; text-align: right; }
+.slider-num { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; }
+.slider .slider-num .num { width: 58px; padding: 3px 4px; font-family: var(--mono); font-size: 12px; }
+.threshold-panel { display: flex; flex-direction: column; gap: 8px; }
+.threshold-panel .alert[hidden] { display: none; }
 
 .help-tip { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid #9fb2c8; background: #eef3f9; color: var(--primary); font: 700 11px/1 var(--font); cursor: pointer; padding: 0; vertical-align: middle; flex: none; }
 .help-tip:hover { background: var(--primary); color: #fff; border-color: var(--primary); }

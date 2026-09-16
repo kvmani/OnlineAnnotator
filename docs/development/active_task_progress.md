@@ -478,3 +478,38 @@ tests/browser/modes.spec.js`. The file is left untouched.
 | red on black | red_on_black | red -> class 1 | {0,1} | HydrideSegmentation red rule in normalization |
 | palette PNG idx {0,1,2} | palette_indexed | indices kept | {0,1,2} | warning: palette colours differ, numbers stored |
 | 32x24 on 64x48 | wrong_size | 400 "never resized ... export at full resolution" | unchanged {0} | none (nothing imported) |
+
+## Polygon threshold tool and typed tool sizes (2026-09-16) — annotator 2.2.0, suite 1.13.0
+
+User request: a threshold tool like Box threshold but with an arbitrary polygon ROI (analysed
+first: pros, cons, risks), numeric entry for brush/eraser sizes, and keyboard shortcuts for the
+current tool size. Then release so ml_server_deploy builds the new version.
+
+### Decisions (user: same size for brush and eraser; separate tool; shortcut scope left to me)
+- Separate tool **Polygon threshold (R)** (R was free). Reuses the polygon clicking model; the
+  preview/apply state is shared with Box threshold (`thresholdState.shape` = box | polygon).
+- One rasteriser `polygonSpans` in `labelmap.js` now drives Polygon, Lasso and the polygon ROI
+  (`polygonRegion`), so one outline always means the same pixels (Node test compares them on
+  convex, concave, self-intersecting and off-image shapes).
+- Otsu over ROI pixels only; strict cut at the outline, before speck removal. Warning above 70 %
+  selected (tight outline -> unimodal histogram). Minimum 16 inside pixels. Clicks during a preview
+  do not discard it. No vertex editing after closing (deliberately out of scope).
+- `[`/`]` are contextual (brush/eraser diameter, wand tolerance, previewed threshold); Shift =
+  big step; matched on `e.code` too because AltGr layouts never reached the old handler.
+- Size stored as a diameter 1–160 (pref `brushDiameter`, old `brush` radius migrated); disc centre
+  snapped (odd -> pixel centre, even -> corner) so a 1 px brush is exactly one pixel.
+- Found while testing: a focused range slider swallowed all shortcuts (`isTyping`), and the
+  threshold panel was rebuilt on every slider input (broke dragging). Both fixed.
+- Not changed: ml_server `tool_help.py` still describes the box threshold only; still accurate,
+  so no portal release was cut for it.
+
+### Verification (2026-09-16)
+- ruff clean; Node engine 11 passed (3 new); pytest 142 passed; Playwright journeys + modes +
+  new `tools.spec.js` 17 passed (the untracked `capture_screenshots.spec.js` excluded as before).
+- Looked at in a real browser on demo image 3: outline drawn, preview cut along it
+  (917 of 66,355 px), grain boundaries not selected, number boxes in the panel.
+
+### Release
+- OnlineAnnotator 2.2.0 tagged `v2.2.0`; ml_server_deploy suite 1.13.0 takes it (no schema
+  change, so rollback to 1.12.0 needs nothing restored).
+
