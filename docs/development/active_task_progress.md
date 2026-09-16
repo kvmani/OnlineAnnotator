@@ -510,6 +510,11 @@ current tool size. Then release so ml_server_deploy builds the new version.
   (917 of 66,355 px), grain boundaries not selected, number boxes in the panel.
 
 ### Release
-- OnlineAnnotator 2.2.0 tagged `v2.2.0`; ml_server_deploy suite 1.13.0 takes it (no schema
-  change, so rollback to 1.12.0 needs nothing restored).
+- Released (2026-09-16): OnlineAnnotator `6a41be4` tag `v2.2.0` (CI green on `main` and tag);
+  ml_server_deploy `e59b51b` (CI green) tag `v1.13.0`, release workflow green (run 35108525145),
+  published https://github.com/kvmani/ml_server_deploy/releases/tag/v1.13.0 with
+  `ml-server-suite-v1.13.0.tar.gz` (64.9 MB) + `.sha256` (`bddcb1636129ce5c80f072221798154a7cf11b88d2ac272f1e817f7a9c9de49e`).
+- Rollout: download both files, `./update.sh`. No schema change, so rolling back to 1.12.0 needs
+  nothing restored.
+- Goal complete.
 
