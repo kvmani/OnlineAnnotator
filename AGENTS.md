@@ -38,7 +38,7 @@ Read these before substantial work, in this order:
    with the work it describes. A new session must be able to resume from the ledger and git
    history alone, without the chat that started the work.
 4. **Targeted tests for ordinary changes.** Run only the tests that cover what you touched (see
-   [Tests](#tests)). Run the full suite only when preparing a release or when the owner asks.
+   [Tests](#testing-proportional-per-platform-governance-9)). Run the full suite only when preparing a release or when the owner asks.
 5. **CI runs only on request.** GitHub Actions workflows start by `workflow_dispatch` only;
    tag-triggered release workflows are the single exception. Never add push, pull-request or
    schedule triggers, and never start a workflow unless the owner asks.
