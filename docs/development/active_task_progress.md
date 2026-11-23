@@ -4,6 +4,18 @@
 > every goal is resumable; no context lives only in chat. Update this file before and after
 > every substantial step, and commit it with the code it describes.
 
+## 2026-11-23 — Agent instructions refactor (done)
+
+- AGENTS.md is now the single instruction file for Codex, Claude and Gemini; `CLAUDE.md` (a pointer
+  that would have taken precedence over AGENTS.md in Claude Code) was removed.
+- The owner's cardinal rules (fetch first, `main` only, this ledger, targeted tests, manual CI) were
+  added above the eight project rules, now headed "Project cardinal rules"; all project rules,
+  boundaries, contracts, release steps and anti-goals are unchanged. Explicit-path staging stays.
+- Reconciled with the owner's test-scope rule: targeted `pytest` per change, the full suite for
+  shared or contract changes, releases or on request; a test-selection table and a map were added.
+- `.github/workflows/ci.yml` now runs only by hand (it ran on every push to `main` and on tags).
+- Added `.gemini/settings.json`. Verification: documentation and CI-trigger change only.
+
 ## Goal (set 2026-09-11)
 
 Turn OnlineAnnotator into a state-of-the-art, intranet-deployable semantic-segmentation

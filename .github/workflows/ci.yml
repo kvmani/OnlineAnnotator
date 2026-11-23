@@ -4,11 +4,10 @@ name: ci
 # so CI checks that platform and nothing else: lint and the pytest suite (which also runs the Node
 # label-engine tests). The Playwright browser journeys are a local gate before every release
 # (AGENTS.md, "Testing"), not a per-push job.
+# Manual only (owner's policy, 2026-11-23): never on push, tag, pull request or a schedule.
+# Start it from the Actions tab ("Run workflow") when asked or before a release.
 
 on:
-  push:
-    branches: [main]
-    tags: ["v*"]
   workflow_dispatch:
 
 concurrency:

@@ -1,7 +1,8 @@
 # AGENTS.md — Repository Working Contract
 
-This file tells human contributors and automation agents how to work in **OnlineAnnotator**.
-It is authoritative for this repository. Read it completely before changing anything.
+This file tells human contributors and automation agents (Codex, Claude, Gemini, …) how to work in
+**OnlineAnnotator**. It is authoritative for this repository and is the only agent-instruction
+file. Read it completely before changing anything.
 
 OnlineAnnotator is the office intranet's tool for creating, reviewing and exporting
 pixel-exact **semantic-segmentation ground truth** for microstructure images. Its first
@@ -22,7 +23,35 @@ Read these before substantial work, in this order:
 5. `docs/DEPLOYMENT.md` — how it runs on the office server.
 6. `docs/development/active_task_progress.md` — the live progress ledger.
 
-## Cardinal rules
+{## Cardinal rules (owner-mandated, every repository)
+
+1. **Fetch before you change anything.** Start every task with
+   `git fetch origin && git pull --rebase --autostash origin main`. Several people and agents push
+   to this repository; never build on a stale checkout.
+2. **Work on `main` only.** Commit and push directly to `main` unless the owner names another
+   branch for the task. No feature branches or pull requests by default. Fetch again before
+   pushing; if the push is rejected, `git pull --rebase origin main`, rerun the affected tests,
+   then push. Never force-push or rewrite published history.
+3. **Keep the progress ledger current:** [`docs/development/active_task_progress.md`](docs/development/active_task_progress.md). Before coding, add (or claim)
+   the task entry: goal, plan, who is working on it, date. After each meaningful step record what
+   was done, the commit, test evidence, decisions, blockers and the next step. Commit the ledger
+   with the work it describes. A new session must be able to resume from the ledger and git
+   history alone, without the chat that started the work.
+4. **Targeted tests for ordinary changes.** Run only the tests that cover what you touched (see
+   [Tests](#tests)). Run the full suite only when preparing a release or when the owner asks.
+5. **CI runs only on request.** GitHub Actions workflows start by `workflow_dispatch` only;
+   tag-triggered release workflows are the single exception. Never add push, pull-request or
+   schedule triggers, and never start a workflow unless the owner asks.
+6. **Be honest.** Never report a check as passed unless you ran it and saw it pass; record skipped
+   checks and the reason. Never weaken, skip or delete a test to make it pass.
+7. **Keep git clean.** Commit sources and canonical assets only: no secrets, real personal data,
+   virtual environments, caches, logs or build output.
+
+The cardinal rules decide *how work is done* (sync, branch, ledger, test scope, CI). The project
+rules in this file decide *what this repository must achieve and protect*; nothing generic here
+relaxes them. If a project rule and a cardinal rule genuinely conflict, stop and ask the owner.}
+
+## Project cardinal rules
 
 These outrank convenience, speed and tidiness. A change that breaks one is a defect even if
 every test passes.
@@ -168,17 +197,32 @@ entry, documentation update, and a note in the ledger.
 
 | Command | What it proves | When |
 | --- | --- | --- |
-| `python -m pytest` | services, API, workflow, exports, auth, CLI; runs the Node engine tests if Node is present | every change |
+| `python -m pytest tests/test_<area>.py` | the services, API or workflow you touched (table below) | every change |
+| `python -m pytest` | services, API, workflow, exports, auth, CLI; runs the Node engine tests if Node is present | shared or contract changes, release, or on request |
 | `node --test tests/js/labelmap.test.mjs` | exact label operations and undo | editor changes |
 | `npm run test:browser` | real-browser user journeys (Playwright, fresh demo server) | any UI or workflow change; before every release |
 | `python -m ruff check src tests` | lint | every commit |
+
+| You changed | Start with |
+| --- | --- |
+| `services/auth`, sessions, accounts | `tests/test_auth.py` |
+| `services/access`, working modes | `tests/test_modes.py` (+ `tests/browser/modes.spec.js`) |
+| `services/workflow` (leases, state machine) | `tests/test_workflow.py` |
+| `services/labels`, mask analysis | `tests/test_mask_analysis.py` (+ `node --test tests/js/labelmap.test.mjs`) |
+| `services/mask_import` | `tests/test_mask_import.py` |
+| `services/exports`, export manifest | `tests/test_exports.py` |
+| `services/projects` | `tests/test_projects.py` |
+| `db.py` migrations, schema | `tests/test_migrations.py` |
+| `_version.py`, health, `cli.py` | `tests/test_meta_and_cli.py` |
+| `web/` assets, external-URL guard | `tests/test_frontend_engine.py` (+ the matching `tests/browser/*.spec.js`) |
 
 - Behaviour changes add or update tests in the same commit; bug fixes add a regression test.
 - Tests must not leave warnings, open resources or stray files.
 - Before a release or deployment run **all** of the above and record results in the ledger.
 - GitHub CI is deliberately lean: one Ubuntu 24.04 / Python 3.12 job (the office platform) running
-  `ruff` and `pytest` on pushes to `main` and tags. The Playwright journeys are not in CI; running
-  them locally before every release is part of the release checklist.
+  `ruff` and `pytest`, started by hand only (owner's policy: never on push, pull request, tag or
+  schedule). The Playwright journeys are not in CI; running them locally before every release is
+  part of the release checklist.
 - Browser testing tip: some automation harnesses inject clicks when sending key presses; drive
   the workspace with DOM events or Playwright's own keyboard, never with a harness that clicks.
 
@@ -188,7 +232,8 @@ entry, documentation update, and a note in the ledger.
 - [ ] UI updated; hint bar, `(?)` help and Help centre describe the new behaviour.
 - [ ] Playwright journey added or updated when a user flow changed.
 - [ ] Docs updated (`SPECIFICATIONS.md`, `docs/*`), `CHANGELOG.md` under *Unreleased*.
-- [ ] `pytest`, `ruff`, and when relevant `npm run test:browser` pass.
+- [ ] Targeted `pytest`, `ruff`, and when relevant `npm run test:browser` pass (full `pytest` for
+      shared or contract changes).
 - [ ] Ledger updated; explicit-path commit; pushed to `main`.
 
 ## Releases
@@ -210,3 +255,15 @@ entry, documentation update, and a note in the ledger.
 - No cloud services, external identity providers or telemetry.
 - No silent "best guess" conversions of masks, images or class maps.
 - No feature that bypasses review for data presented as ground truth.
+
+## Map
+
+| Need | Read |
+| --- | --- |
+| Platform governance | `../ml_server/docs/PLATFORM_VISION_AND_GOVERNANCE.md` ([on GitHub](https://github.com/kvmani/ml_server/blob/main/docs/PLATFORM_VISION_AND_GOVERNANCE.md)) |
+| Product and contracts | [SPECIFICATIONS.md](SPECIFICATIONS.md) |
+| Code organisation | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| Dataset export contract | [docs/EXPORT_FORMAT.md](docs/EXPORT_FORMAT.md) |
+| Office deployment | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) |
+| Version history | [CHANGELOG.md](CHANGELOG.md) |
+| Live progress ledger | [docs/development/active_task_progress.md](docs/development/active_task_progress.md) |
